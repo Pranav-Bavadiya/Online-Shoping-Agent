@@ -15,9 +15,27 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 10080  # 7 days
 
+    # LLM Provider selection
+    # Supported: openai | gemini | ollama | anthropic
+    llm_provider: str = "openai"
+    # Model override — leave empty to use the provider's default
+    llm_model: str = ""
+
     # OpenAI
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+
+    # Google Gemini
+    gemini_api_key: str = ""
+    # Default: gemini-1.5-flash  (fast + free-tier friendly)
+
+    # Ollama (local — no key required)
+    ollama_base_url: str = "http://localhost:11434"
+    # Default model: llama3
+
+    # Anthropic
+    anthropic_api_key: str = ""
+    # Default model: claude-3-haiku-20240307
 
     # Google OAuth
     google_client_id: str = ""

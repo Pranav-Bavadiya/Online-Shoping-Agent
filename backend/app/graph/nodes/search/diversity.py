@@ -75,17 +75,10 @@ async def diversity_node(state: AgentState) -> dict:
         else:
             overflow.append(p)
 
-    # If we haven't hit minimum unique brands, add overflow items from other brands
-    unique_brands = len(set(_get_brand(p) for p in diverse))
-    if unique_brands < MIN_BRANDS_IN_RESULTS and overflow:
-        brand_set = {_get_brand(p) for p in diverse}
-        for p in overflow:
-            b = _get_brand(p)
-            if b not in brand_set:
-                diverse.append(p)
-                brand_set.add(b)
-                if len(brand_set) >= MIN_BRANDS_IN_RESULTS:
-                    break
+    # Issue #5 fix: products land in overflow ONLY when their brand already hit
+    # max_per_brand, which means that brand is already represented in `diverse`.
+    # Therefore overflow can never introduce a NEW brand — skip the loop entirely.
+    # (The old loop was O(n) but guaranteed to find nothing useful.)
 
     logger.info("Node: diversity end", extra={
         "count": len(diverse),

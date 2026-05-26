@@ -2,11 +2,10 @@
 import json
 from typing import Any
 
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.config import settings
 from app.core.constants import QUERY_CONTEXT_MESSAGES
+from app.core.llm_factory import get_llm, is_llm_configured
 from app.core.logging import get_logger
 from app.graph.state import AgentState
 
@@ -20,23 +19,26 @@ Return ONLY valid JSON with this exact schema:
   "category": "<product category or empty string>",
   "keywords": ["<keyword1>", "<keyword2>"],
   "price_filter": {"min": <number or 0>, "max": <number or 0>},
-  "normalized_query": "<clean version of query>"
+  "normalized_query": "<complete standalone search query>"
 }
 
 Rules:
-- Use conversation context to resolve follow-ups (e.g., "under 2000" → use last category)
-- Extract price numbers from text (e.g., "under 2000" → max: 2000)
-- If no price mentioned, use 0
-- keywords should be meaningful search terms, not stop words
-- category examples: electronics, headphones, smartphones, laptops, clothing, shoes"""
+- Use conversation context to resolve follow-ups (e.g., "under 2000" → use last category).
+- Extract price numbers from text (e.g., "under 2000" → max: 2000).
+- If no price mentioned, use 0 for both min and max.
+- keywords should be meaningful search terms, not stop words.
+- category examples: electronics, headphones, smartphones, laptops, clothing, shoes.
 
-
-def _get_llm() -> ChatOpenAI:
-    return ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0,
-    )
+IMPORTANT — Refinement / dissatisfied follow-ups:
+If the user expresses dissatisfaction or asks to add conditions (e.g., "give me cheaper ones",
+"show me with better rating", "I want Samsung ones", "give me wireless ones under 1500"):
+  • Build a COMPLETE standalone normalized_query that includes BOTH the original product intent
+    AND all new conditions. Do NOT just write the delta.
+  • Example: original="headphones", follow-up="show me wireless under 1500"
+    → normalized_query = "wireless headphones under 1500 rupees"
+  • Include all previously established filters (category, brand, price) PLUS the new ones.
+  • Update price_filter and keywords accordingly.
+"""
 
 
 async def query_understanding_node(state: AgentState) -> dict:
@@ -78,13 +80,13 @@ Current user query: {last_user_msg}
 
 Extract structured query:"""
 
-    # Fallback if no API key
-    if not settings.openai_api_key:
-        logger.warning("No OpenAI API key — using heuristic query parser")
+    # Fallback if no LLM configured
+    if not is_llm_configured():
+        logger.warning("No LLM configured — using heuristic query parser")
         structured = _heuristic_parse(last_user_msg)
     else:
         try:
-            llm = _get_llm()
+            llm = get_llm(temperature=0)
             resp = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
             raw = resp.content.strip()
             if raw.startswith("```"):

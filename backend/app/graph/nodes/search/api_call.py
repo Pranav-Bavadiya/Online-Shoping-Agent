@@ -33,6 +33,20 @@ async def api_call_node(state: AgentState) -> dict:
     retrieval = state.get("retrieval") or {}
     existing_raw = state.get("raw_results") or []
 
+    # Issue #7 fix: for PARTIAL decision, the cache covered [0, cache_price_max].
+    # The user wants up to query_price_max. Fetch only the MISSING range:
+    # [cache_price_max, query_price_max] so we don't re-fetch what cache already has.
+    if retrieval.get("decision") == "partial":
+        cache_filters = retrieval.get("cache_filters") or {}
+        cache_price_max = float(cache_filters.get("price_max") or 0)
+        if cache_price_max > 0:
+            # Fetch products priced above the cache ceiling
+            price_min = cache_price_max
+            logger.info(
+                "PARTIAL decision — fetching missing price range",
+                extra={"price_min": price_min, "price_max": price_max, "request_id": state.get("request_id")},
+            )
+
     provider = _get_provider(source)
 
     try:

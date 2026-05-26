@@ -1,9 +1,8 @@
 """Disambiguation Node — detects ambiguity and asks for clarification if needed."""
 import json
-from langchain_openai import ChatOpenAI
+from app.core.llm_factory import get_llm, is_llm_configured
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.config import settings
 from app.core.constants import DISAMBIGUATION_CONTEXT_MESSAGES
 from app.core.logging import get_logger
 from app.graph.state import AgentState
@@ -58,7 +57,7 @@ async def disambiguation_node(state: AgentState) -> dict:
         }
 
     # LLM-based disambiguation for edge cases
-    if settings.openai_api_key:
+    if is_llm_configured():
         context_msgs = messages[-(DISAMBIGUATION_CONTEXT_MESSAGES):]
         context_str = "\n".join(
             f"{(m.get('role') if isinstance(m, dict) else 'msg')}: "
@@ -67,7 +66,7 @@ async def disambiguation_node(state: AgentState) -> dict:
         )
         prompt = f"Context:\n{context_str}\n\nStructured query: {json.dumps(sq)}\nUser message: {last_user_msg}"
         try:
-            llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key, temperature=0)
+            llm = get_llm(temperature=0)
             resp = await llm.ainvoke([SystemMessage(content=DISAMBIGUATION_SYSTEM), HumanMessage(content=prompt)])
             raw = resp.content.strip().strip("```json").strip("```").strip()
             result = json.loads(raw)

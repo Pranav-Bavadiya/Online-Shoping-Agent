@@ -1,7 +1,7 @@
 """Search service — orchestrates the LangGraph pipeline for a single query."""
 from typing import Optional
 
-from langchain_openai import ChatOpenAI
+from app.core.llm_factory import get_llm, is_llm_configured
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
@@ -22,11 +22,11 @@ TITLE_SYSTEM = "You are a thread title generator. Generate a short (max 6 words)
 
 
 async def _generate_title(query: str) -> str:
-    if not settings.openai_api_key:
+    if not is_llm_configured():
         words = query.strip().split()[:5]
         return " ".join(words).title() or "Shopping Session"
     try:
-        llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key, temperature=0.4)
+        llm = get_llm(temperature=0.4)
         resp = await llm.ainvoke([
             SystemMessage(content=TITLE_SYSTEM),
             HumanMessage(content=query),

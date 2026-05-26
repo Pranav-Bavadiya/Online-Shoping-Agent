@@ -1,9 +1,8 @@
 """Intent Router Node — routes to 'search' or 'chat' flow."""
 import json
-from langchain_openai import ChatOpenAI
+from app.core.llm_factory import get_llm, is_llm_configured
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.config import settings
 from app.core.constants import INTENT_CHAT, INTENT_SEARCH
 from app.core.logging import get_logger
 from app.graph.state import AgentState
@@ -61,7 +60,7 @@ async def intent_router_node(state: AgentState) -> dict:
             return {"intent": intent}
 
     # If no clear heuristic signal, use LLM or default
-    if settings.openai_api_key:
+    if is_llm_configured():
         try:
             context_msgs = messages[-5:]
             context_str = "\n".join(
@@ -70,7 +69,7 @@ async def intent_router_node(state: AgentState) -> dict:
                 for m in context_msgs
             )
             prompt = f"Conversation:\n{context_str}\n\nLatest message: {last_user_msg}\nStructured query: {json.dumps(sq)}"
-            llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key, temperature=0)
+            llm = get_llm(temperature=0)
             resp = await llm.ainvoke([SystemMessage(content=ROUTER_SYSTEM), HumanMessage(content=prompt)])
             raw = resp.content.strip().strip("```json").strip("```").strip()
             result = json.loads(raw)
