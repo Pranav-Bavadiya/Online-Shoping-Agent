@@ -53,4 +53,17 @@ async def filtering_node(state: AgentState) -> dict:
         logger.info("Node: filtering — relaxed filter applied", extra={"count": len(filtered)})
 
     logger.info("Node: filtering end", extra={"filtered": len(filtered), "raw": len(raw), "request_id": state.get("request_id")})
-    return {"filtered_results": filtered}
+    return {"filtered_results": _enrich_commerce_fields(filtered)}
+
+
+def _enrich_commerce_fields(products: list[dict]) -> list[dict]:
+    """Lift can_buy_here/redirect_url from raw_attributes if not already top-level."""
+    for p in products:
+        attrs = p.get("raw_attributes") or {}
+        if "can_buy_here" not in p:
+            p["can_buy_here"] = attrs.get("can_buy_here", p.get("source") == "local")
+        if "redirect_url" not in p:
+            p["redirect_url"] = attrs.get("redirect_url", p.get("url", ""))
+        if "cart_supported" not in p:
+            p["cart_supported"] = attrs.get("cart_supported", True)
+    return products

@@ -1,4 +1,4 @@
-"""LangGraph state schema — STRICT as per spec."""
+"""LangGraph state schema — upgraded with commerce capabilities."""
 from typing import Annotated, Any, Optional
 from typing_extensions import TypedDict
 from langgraph.graph import add_messages
@@ -19,20 +19,26 @@ class StructuredQuery(TypedDict, total=False):
 
 class RetrievalInfo(TypedDict, total=False):
     cache_hit: bool
-    decision: str           # reuse | partial | new
+    decision: str
     cache_doc_id: Optional[str]
+    cache_filters: Optional[dict]
 
 
 class ToolContext(TypedDict, total=False):
     last_tool_used: str
-    last_tool_status: str   # found | not_found
+    last_tool_status: str
     last_product_id: str
     iteration: int
+    action: str
+    last_raw_result: Optional[dict]
 
 
 class ConversationContext(TypedDict, total=False):
     last_product_id: str
     last_category: str
+    last_shown_products: list[dict]
+    marketplace_preferences: list[str]
+    recently_referenced_products: list[str]
 
 
 class ClarificationInfo(TypedDict, total=False):
@@ -40,39 +46,51 @@ class ClarificationInfo(TypedDict, total=False):
     question: Optional[str]
 
 
+class CartItem(TypedDict, total=False):
+    cart_item_id: str
+    product_id: str
+    title: str
+    price: dict
+    image: str
+    source: str
+    can_buy_here: bool
+    redirect_url: str
+    quantity: int
+    added_at: str
+
+
+class ThreadCart(TypedDict, total=False):
+    items: list[CartItem]
+
+
+class CheckoutState(TypedDict, total=False):
+    active: bool
+    step: Optional[str]
+    selected_cart_items: list[str]   # cart_item_ids
+    selected_address_id: Optional[str]
+    payment_status: Optional[str]
+    current_order_id: Optional[str]
+    razorpay_order_id: Optional[str]
+    payment_link: Optional[str]
+
+
 class AgentState(TypedDict):
-    # Core message history — managed by add_messages reducer
     messages: Annotated[list[Any], add_messages]
-
-    # Current query intent
-    intent: Optional[str]                  # search | chat
-
-    # Structured query extracted by LLM
+    intent: Optional[str]
     structured_query: Optional[StructuredQuery]
-
-    # Cache / retrieval metadata
     retrieval: Optional[RetrievalInfo]
-
-    # Raw results from API (before filtering)
     raw_results: Optional[list[dict]]
-
-    # Filtered + ranked results ready for formatting
     filtered_results: Optional[list[dict]]
-
-    # Tool agent context
     tool_context: Optional[ToolContext]
-
-    # Conversation context (last seen product/category)
     conversation_context: Optional[ConversationContext]
-
-    # Disambiguation / clarification state
     clarification: Optional[ClarificationInfo]
-
-    # Final formatted products
     final_products: Optional[list[dict]]
-
-    # User feedback summary injected before ranking
     user_feedback_summary: Optional[dict]
+
+    # Commerce state
+    selected_marketplaces: Optional[list[str]]
+    thread_cart: Optional[ThreadCart]
+    checkout: Optional[CheckoutState]
 
     # Request metadata
     user_id: Optional[str]

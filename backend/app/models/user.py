@@ -24,6 +24,8 @@ class UserModel(BaseModel):
     phone: Optional[str] = None
     addresses: list[Address] = []
     default_address_id: Optional[str] = None
+    role: str = "customer"          # customer | seller
+    seller_id: Optional[str] = None # set when user registers as seller
     profile_completed: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -31,5 +33,4 @@ class UserModel(BaseModel):
     model_config = {"populate_by_name": True}
 
     def to_doc(self) -> dict:
-        d = self.model_dump(by_alias=True)
-        return d
+        return self.model_dump(by_alias=True)

@@ -1,9 +1,6 @@
-"""Query Understanding Node — extracts structured_query from user message using LLM."""
+"""Query Understanding Node — extracts structured_query from user message."""
 import json
-from typing import Any
-
 from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.core.constants import QUERY_CONTEXT_MESSAGES
 from app.core.llm_factory import get_llm, is_llm_configured
 from app.core.logging import get_logger
@@ -12,7 +9,7 @@ from app.graph.state import AgentState
 logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """You are a shopping query understanding engine.
-Extract structured information from the user's shopping query.
+Extract structured information from the user's message.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -23,35 +20,27 @@ Return ONLY valid JSON with this exact schema:
 }
 
 Rules:
-- Use conversation context to resolve follow-ups (e.g., "under 2000" → use last category).
-- Extract price numbers from text (e.g., "under 2000" → max: 2000).
-- If no price mentioned, use 0 for both min and max.
-- keywords should be meaningful search terms, not stop words.
-- category examples: electronics, headphones, smartphones, laptops, clothing, shoes.
+- For product search queries: extract category, keywords, price filters.
+- For commerce commands (add to cart, checkout, show cart, buy): set category="" and keywords=[].
+  normalized_query should describe the action, e.g. "add product to cart".
+- Use conversation context for follow-up queries — include the original product intent.
+- Extract prices: "under 2000" → max:2000, "above 500" → min:500.
+- If no price mentioned, use 0 for both.
+- Keywords: meaningful terms only, no stop words.
 
-IMPORTANT — Refinement / dissatisfied follow-ups:
-If the user expresses dissatisfaction or asks to add conditions (e.g., "give me cheaper ones",
-"show me with better rating", "I want Samsung ones", "give me wireless ones under 1500"):
-  • Build a COMPLETE standalone normalized_query that includes BOTH the original product intent
-    AND all new conditions. Do NOT just write the delta.
-  • Example: original="headphones", follow-up="show me wireless under 1500"
-    → normalized_query = "wireless headphones under 1500 rupees"
-  • Include all previously established filters (category, brand, price) PLUS the new ones.
-  • Update price_filter and keywords accordingly.
+Refinement rule: user says "show cheaper ones", "wireless ones", "Samsung only" →
+generate COMPLETE query merging original intent + new conditions.
+Example: original=headphones, new=wireless under 1500 → "wireless headphones under 1500"
 """
 
 
 async def query_understanding_node(state: AgentState) -> dict:
-    logger.info("Node: query_understanding start", extra={
-        "request_id": state.get("request_id"),
-        "thread_id": state.get("thread_id"),
-    })
+    logger.info("Node: query_understanding start", extra={"request_id": state.get("request_id")})
 
     messages = state.get("messages", [])
     if not messages:
         return {"structured_query": {"category": "", "keywords": [], "price_filter": {"min": 0, "max": 0}, "normalized_query": ""}}
 
-    # Get the latest user message
     last_user_msg = ""
     for msg in reversed(messages):
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
@@ -60,67 +49,58 @@ async def query_understanding_node(state: AgentState) -> dict:
             last_user_msg = content
             break
 
-    # Build context from last N messages
+    if not last_user_msg.strip():
+        return {"structured_query": {"category": "", "keywords": [], "price_filter": {"min": 0, "max": 0}, "normalized_query": ""}}
+
     context_msgs = messages[-(QUERY_CONTEXT_MESSAGES):]
     context_str = "\n".join(
-        f"{(m.get('role') if isinstance(m, dict) else getattr(m, 'type', 'unknown'))}: "
+        f"{(m.get('role') if isinstance(m, dict) else 'msg')}: "
         f"{(m.get('content') if isinstance(m, dict) else getattr(m, 'content', ''))}"
         for m in context_msgs
     )
+    prompt = f"Conversation context:\n{context_str}\n\nLatest user message: {last_user_msg}"
 
-    conv_ctx = state.get("conversation_context") or {}
-    last_category = conv_ctx.get("last_category", "")
-
-    prompt = f"""Conversation so far:
-{context_str}
-
-Last category seen: {last_category or 'none'}
-
-Current user query: {last_user_msg}
-
-Extract structured query:"""
-
-    # Fallback if no LLM configured
+    structured = None
     if not is_llm_configured():
-        logger.warning("No LLM configured — using heuristic query parser")
         structured = _heuristic_parse(last_user_msg)
     else:
         try:
             llm = get_llm(temperature=0)
             resp = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
-            raw = resp.content.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`").replace("json", "").strip()
+            raw = resp.content.strip().strip("```json").strip("```").strip()
             structured = json.loads(raw)
         except Exception as exc:
-            logger.error("LLM query understanding failed", extra={"error": str(exc)})
+            logger.warning("Query understanding LLM failed", extra={"error": str(exc)})
             structured = _heuristic_parse(last_user_msg)
 
-    structured["source"] = "ebay"
+    # Carry forward selected_marketplaces into the structured query
+    selected_markets = state.get("selected_marketplaces")
+    if selected_markets:
+        structured["selected_marketplaces"] = selected_markets
+
     logger.info("Node: query_understanding end", extra={
-        "structured_query": structured,
+        "category": structured.get("category"), "keywords": structured.get("keywords"),
         "request_id": state.get("request_id"),
     })
     return {"structured_query": structured}
 
 
-def _heuristic_parse(query: str) -> dict:
-    """Simple keyword+price extractor when LLM unavailable."""
+def _heuristic_parse(msg: str) -> dict:
     import re
+    lower = msg.lower()
     price_max = 0.0
     price_min = 0.0
-    price_match = re.search(r"under\s*[\₹$]?\s*([\d,]+)", query, re.IGNORECASE)
-    if price_match:
-        price_max = float(price_match.group(1).replace(",", ""))
-    between = re.search(r"([\d,]+)\s*(?:to|-)\s*([\d,]+)", query, re.IGNORECASE)
-    if between:
-        price_min = float(between.group(1).replace(",", ""))
-        price_max = float(between.group(2).replace(",", ""))
-    stopwords = {"i", "want", "need", "find", "show", "me", "best", "good", "cheap", "a", "an", "the"}
-    words = [w for w in re.findall(r"\w+", query.lower()) if w not in stopwords]
+    m = re.search(r"under\s+(\d+)", lower)
+    if m:
+        price_max = float(m.group(1))
+    m = re.search(r"above\s+(\d+)|min\s+(\d+)", lower)
+    if m:
+        price_min = float(m.group(1) or m.group(2))
+    stop = {"show", "find", "get", "me", "a", "the", "some", "good", "best", "i", "want", "buy", "please"}
+    keywords = [w for w in lower.split() if w not in stop and len(w) > 2][:5]
     return {
         "category": "",
-        "keywords": words[:5],
+        "keywords": keywords,
         "price_filter": {"min": price_min, "max": price_max},
-        "normalized_query": query.strip().lower(),
+        "normalized_query": msg.strip(),
     }

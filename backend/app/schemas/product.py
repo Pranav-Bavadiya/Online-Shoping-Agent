@@ -5,11 +5,11 @@ from pydantic import BaseModel
 
 class PriceSchema(BaseModel):
     value: float
-    currency: str = "USD"
+    currency: str = "INR"
 
 
 class MessageProductSchema(BaseModel):
-    """Lightweight product returned inside chat messages."""
+    """Product returned inside chat messages — includes commerce metadata."""
     product_id: str
     title: str
     price: PriceSchema
@@ -18,6 +18,10 @@ class MessageProductSchema(BaseModel):
     rating: float = 0.0
     source: str = ""
     short_reason: str = ""
+    # Commerce fields
+    can_buy_here: bool = False
+    redirect_url: str = ""
+    cart_supported: bool = False
 
 
 class RawProductSchema(BaseModel):
@@ -31,3 +35,6 @@ class RawProductSchema(BaseModel):
     rating: float = 0.0
     category: str = ""
     raw_attributes: dict[str, Any] = {}
+    can_buy_here: bool = False
+    redirect_url: str = ""
+    cart_supported: bool = False

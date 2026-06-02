@@ -48,7 +48,13 @@ class EbayProvider(BaseSearchProvider):
                 image=image,
                 rating=0.0,
                 category=category,
-                raw_attributes={"condition": condition_name, "item_id": item_id},
+                raw_attributes={
+                    "condition": condition_name,
+                    "item_id": item_id,
+                    "can_buy_here": False,
+                    "redirect_url": url,
+                    "cart_supported": True,
+                },
             )
         except Exception as exc:
             logger.warning("Failed to parse eBay item", extra={"error": str(exc)})

@@ -14,3 +14,7 @@ class SearchResponse(BaseModel):
     content: str
     products: list[MessageProductSchema] = []
     clarification_question: Optional[str] = None
+    # Commerce state returned per-response
+    cart: Optional[dict] = None
+    checkout: Optional[dict] = None
+    selected_marketplaces: Optional[list[str]] = None

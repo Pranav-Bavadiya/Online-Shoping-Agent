@@ -20,12 +20,16 @@ class RawProduct(BaseModel):
     product_id: str
     source: str
     title: str
-    price: dict[str, Any] = Field(default_factory=lambda: {"value": 0.0, "currency": "USD"})
+    price: dict[str, Any] = Field(default_factory=lambda: {"value": 0.0, "currency": "INR"})
     url: str = ""
     image: str = ""
     rating: float = 0.0
     category: str = ""
     raw_attributes: dict[str, Any] = {}
+    # Commerce metadata
+    can_buy_here: bool = False
+    redirect_url: str = ""
+    cart_supported: bool = True
 
 
 class ProductCacheModel(BaseModel):

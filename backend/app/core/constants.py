@@ -11,7 +11,7 @@ CACHE_KEYWORD_SIMILARITY_THRESHOLD = 0.6
 
 # Search
 MAX_SEARCH_RESULTS_RETURNED = 20
-MAX_TOOL_ITERATIONS = 3
+MAX_TOOL_ITERATIONS = 30
 API_RETRY_ATTEMPTS = 3
 API_TIMEOUT_SECONDS = 10.0
 
@@ -51,3 +51,42 @@ TOOL_SEARCH = "search_tool"
 # Message roles
 ROLE_USER = "user"
 ROLE_ASSISTANT = "assistant"
+
+# New tool names (commerce)
+TOOL_ADD_TO_CART      = "add_to_cart"
+TOOL_REMOVE_FROM_CART = "remove_from_cart"
+TOOL_SHOW_CART        = "show_cart"
+TOOL_UPDATE_CART_QTY  = "update_cart_quantity"
+TOOL_CLEAR_CART       = "clear_cart"
+TOOL_CHANGE_MARKETS   = "change_marketplaces"
+TOOL_START_CHECKOUT   = "start_checkout"
+TOOL_SELECT_ITEMS     = "select_checkout_items"
+TOOL_SELECT_ADDRESS   = "select_address"
+TOOL_ADD_ADDRESS      = "add_address"
+TOOL_CREATE_PAYMENT   = "create_payment"
+TOOL_CONFIRM_PAYMENT  = "confirm_payment"
+TOOL_BUY_NOW          = "buy_now"
+
+# Marketplaces
+MARKETPLACE_LOCAL = "local"
+MARKETPLACE_EBAY  = "ebay"
+MARKETPLACE_MOCK  = "mock"
+ALL_MARKETPLACES  = [MARKETPLACE_LOCAL, MARKETPLACE_EBAY, MARKETPLACE_MOCK]
+
+# Order statuses
+ORDER_PENDING_PAYMENT = "PENDING_PAYMENT"
+ORDER_PAID            = "PAID"
+ORDER_DISPATCHED      = "DISPATCHED"
+ORDER_COMPLETED       = "COMPLETED"
+ACTIVE_ORDER_STATUSES = [ORDER_PENDING_PAYMENT, ORDER_PAID]
+
+# User roles
+ROLE_CUSTOMER = "customer"
+ROLE_SELLER   = "seller"
+
+# Checkout steps
+CHECKOUT_STEP_INIT    = "init"
+CHECKOUT_STEP_ITEMS   = "items_selected"
+CHECKOUT_STEP_ADDRESS = "address_selected"
+CHECKOUT_STEP_PAYMENT = "payment_created"
+CHECKOUT_STEP_DONE    = "done"

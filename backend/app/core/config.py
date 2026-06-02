@@ -62,3 +62,8 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+# Razorpay (test-mode)
+razorpay_key_id: str = ""
+razorpay_key_secret: str = ""
