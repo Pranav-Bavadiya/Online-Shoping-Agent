@@ -34,6 +34,13 @@ COMMERCE_KEYWORDS = {
     "order now", "place order", "delivery", "address", "payment",
     "switch to", "use ebay", "use amazon", "use local", "local only",
     "ebay only", "marketplace",
+    # Silent-buy patterns
+    "just buy", "buy it for me", "buy for me", "buy this for me",
+    "don't show", "just order", "order it for me", "directly buy",
+    "purchase it for me", "go ahead and buy", "go ahead and order",
+    # Order queries
+    "my orders", "order status", "where is my order", "track order",
+    "recent purchases", "my purchase", "order history",
 }
 
 SEARCH_KEYWORDS = {

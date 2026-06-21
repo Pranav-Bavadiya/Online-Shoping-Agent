@@ -14,9 +14,10 @@ async def cache_lookup_node(state: AgentState) -> dict:
     sq = state.get("structured_query") or {}
     category = sq.get("category", "")
     keywords = sq.get("keywords") or []
-    source = sq.get("source", "ebay")
+    # Use the source set by validation_node (could be "multi", "local", "ebay", etc.)
+    source = sq.get("source") or "multi"
 
-    # Fetch candidates matching category + source
+    # Build cache query — source must match exactly
     query: dict = {"query_signature.source": source}
     if category:
         query["query_signature.category"] = category
@@ -41,16 +42,17 @@ async def cache_lookup_node(state: AgentState) -> dict:
         logger.info("Node: cache_lookup — hit", extra={
             "cache_doc_id": best_doc_id,
             "score": best_meta.get("score"),
+            "source": source,
             "request_id": state.get("request_id"),
         })
         return {
             "retrieval": {
                 "cache_hit": True,
-                "decision": "pending",  # decision_engine will decide
+                "decision": "pending",
                 "cache_doc_id": best_doc_id,
                 "cache_filters": best_meta.get("filters_used", {}),
             }
         }
 
-    logger.info("Node: cache_lookup — miss", extra={"request_id": state.get("request_id")})
+    logger.info("Node: cache_lookup — miss", extra={"source": source, "request_id": state.get("request_id")})
     return {"retrieval": {"cache_hit": False, "decision": "new", "cache_doc_id": None}}

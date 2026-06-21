@@ -62,6 +62,7 @@ async def get_cart(thread_id: str, user=Depends(get_current_user)):
         purchasable_count=summary["purchasable_count"],
         external_count=summary["external_count"],
         estimated_total=summary["estimated_total"],
+        currency=summary.get("currency", "INR"),
     )
 
 

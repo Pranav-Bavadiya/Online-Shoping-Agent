@@ -60,12 +60,13 @@ TOOL_UPDATE_CART_QTY  = "update_cart_quantity"
 TOOL_CLEAR_CART       = "clear_cart"
 TOOL_CHANGE_MARKETS   = "change_marketplaces"
 TOOL_START_CHECKOUT   = "start_checkout"
-TOOL_SELECT_ITEMS     = "select_checkout_items"
+# TOOL_SELECT_ITEMS removed — checkout always uses all purchasable items automatically
 TOOL_SELECT_ADDRESS   = "select_address"
 TOOL_ADD_ADDRESS      = "add_address"
 TOOL_CREATE_PAYMENT   = "create_payment"
 TOOL_CONFIRM_PAYMENT  = "confirm_payment"
 TOOL_BUY_NOW          = "buy_now"
+TOOL_GET_ORDERS       = "get_orders"
 
 # Marketplaces
 MARKETPLACE_LOCAL = "local"

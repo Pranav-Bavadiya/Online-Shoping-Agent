@@ -44,11 +44,42 @@ async def ranking_node(state: AgentState) -> dict:
 
     products = list(state.get("filtered_results") or [])
     feedback_summary = state.get("user_feedback_summary") or {}
+    sq = state.get("structured_query") or {}
+    required_types: list[str] = [t.lower().strip() for t in (sq.get("required_types") or [])]
 
     scored = [(p, _compute_score(p, feedback_summary)) for p in products]
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    ranked = [p for p, _ in scored[:MAX_SEARCH_RESULTS_RETURNED]]
+    if not required_types:
+        ranked = [p for p, _ in scored[:MAX_SEARCH_RESULTS_RETURNED]]
+    else:
+        # For multi-type queries: interleave top results from each type so all types
+        # appear in the final list rather than higher-scored types crowding out others.
+        type_buckets: dict[str, list[dict]] = {rt: [] for rt in required_types}
+        general: list[dict] = []
 
-    logger.info("Node: ranking end", extra={"ranked": len(ranked), "request_id": state.get("request_id")})
+        for p, _ in scored:
+            title = (p.get("title") or "").lower()
+            matched = False
+            for rt in required_types:
+                if any(word in title for word in rt.split()):
+                    type_buckets[rt].append(p)
+                    matched = True
+                    break
+            if not matched:
+                general.append(p)
+
+        # Round-robin interleave: take top items from each type in turn
+        per_type_limit = max(2, MAX_SEARCH_RESULTS_RETURNED // max(len(required_types), 1))
+        ranked = []
+        for rt in required_types:
+            ranked.extend(type_buckets[rt][:per_type_limit])
+        ranked.extend(general[:MAX_SEARCH_RESULTS_RETURNED - len(ranked)])
+        ranked = ranked[:MAX_SEARCH_RESULTS_RETURNED]
+
+    logger.info("Node: ranking end", extra={
+        "ranked": len(ranked),
+        "required_types": required_types,
+        "request_id": state.get("request_id"),
+    })
     return {"filtered_results": ranked}

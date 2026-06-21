@@ -30,18 +30,35 @@ async def start_checkout_tool(
     if not all_items:
         return {"status": "error", "message": "Your cart is empty. Add products before checking out."}
 
+    # Prepare external items info with full details for frontend rendering
+    external_info = [
+        {
+            "title": i["title"],
+            "redirect_url": i.get("redirect_url", ""),
+            "cart_item_id": i["cart_item_id"],
+            "image": i.get("image", ""),
+            "price": i.get("price", {}),
+            "source": i.get("source", "external"),
+            "can_buy_here": False,
+        }
+        for i in external
+    ] if external else []
+
     if not purchasable:
-        msgs = [f"• {i['title']} — {i.get('redirect_url','')}" for i in external]
+        ext_lines = "\n".join(
+            f"• {i['title']} — {i.get('redirect_url', 'No URL available')}"
+            for i in external
+        )
         return {
             "status": "external_only",
             "message": (
                 "Your cart only contains external marketplace products that cannot be "
-                "purchased here. Please visit the original marketplaces:\n" + "\n".join(msgs)
+                "purchased here. Please visit the original marketplace sites:\n" + ext_lines
             ),
-            "external_items": external,
+            "external_items": external_info,
         }
 
-    # Determine which items to checkout
+    # Determine which local items to checkout
     if cart_item_ids:
         selected = [i for i in purchasable if i["cart_item_id"] in cart_item_ids]
         if not selected:
@@ -50,20 +67,32 @@ async def start_checkout_tool(
         selected = purchasable
 
     subtotal = sum(float(i["price"]["value"]) * i.get("quantity", 1) for i in selected)
-    return {
+    currency = selected[0]["price"].get("currency", "INR") if selected else "INR"
+
+    result = {
         "status": "success",
         "step": CHECKOUT_STEP_ITEMS,
         "selected_items": selected,
         "selected_item_ids": [i["cart_item_id"] for i in selected],
         "subtotal": round(subtotal, 2),
-        "currency": selected[0]["price"].get("currency", "INR") if selected else "INR",
+        "currency": currency,
         "message": (
-            f"Ready to checkout {len(selected)} item(s) totalling "
-            f"{selected[0]['price'].get('currency','INR')} {subtotal:.2f}. "
-            "Which address should I use for delivery?"
+            f"Starting checkout for {len(selected)} local item(s) totalling "
+            f"{currency} {subtotal:.2f}. Let me pull up your saved addresses... 📦"
         ),
-        "external_skipped": [i["title"] for i in external] if external else [],
+        "has_external": bool(external_info),
+        "external_items": external_info,
     }
+
+    if external_info:
+        ext_lines = "\n".join(f"• {i['title']} — {i['redirect_url']}" for i in external_info)
+        result["external_notice"] = (
+            "⚠️ You also have external products in your cart that cannot be purchased here.\n"
+            + ext_lines
+            + "\n\nHave you visited these external sites? Would you like me to remove them from your cart?"
+        )
+
+    return result
 
 
 async def select_address_tool(
@@ -122,7 +151,7 @@ async def list_addresses_tool(user_id: str) -> dict:
     if not addresses:
         return {
             "status": "no_addresses",
-            "message": "You have no saved addresses. Please provide your delivery address.",
+            "message": "You don't have any saved addresses yet. Please provide your delivery address and I'll save it for future orders.",
             "addresses": [],
         }
     addr_list = "\n".join(
@@ -132,7 +161,10 @@ async def list_addresses_tool(user_id: str) -> dict:
     return {
         "status": "success",
         "addresses": addresses,
-        "message": f"Your saved addresses:\n{addr_list}",
+        "message": (
+            f"Here are your saved addresses:\n{addr_list}\n\n"
+            "Which one would you like to use for delivery? Or would you like to add a new address?"
+        ),
     }
 
 
@@ -190,7 +222,14 @@ async def confirm_payment_tool(
     if not valid:
         return {
             "status": "failed",
-            "message": "Payment verification failed. Please try again or contact support.",
+            "message": (
+                "Hmm, the payment verification didn't go through. This can sometimes happen due to "
+                "a network hiccup. Would you like to:\n"
+                "1. Try the payment again\n"
+                "2. Use a different payment method\n"
+                "3. Start a fresh payment session\n\n"
+                "Just let me know and I'll sort it out for you!"
+            ),
         }
 
     # Find and update order

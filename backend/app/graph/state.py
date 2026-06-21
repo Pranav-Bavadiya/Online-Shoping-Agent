@@ -15,6 +15,9 @@ class StructuredQuery(TypedDict, total=False):
     price_filter: PriceFilter
     normalized_query: str
     source: str
+    required_types: list[str]   # e.g. ["red shirts", "blue jeans"] for multi-type queries
+    brand_strict: str           # e.g. "samsung" when user explicitly requests one brand only
+    selected_marketplaces: list[str]
 
 
 class RetrievalInfo(TypedDict, total=False):
@@ -66,12 +69,14 @@ class ThreadCart(TypedDict, total=False):
 class CheckoutState(TypedDict, total=False):
     active: bool
     step: Optional[str]
-    selected_cart_items: list[str]   # cart_item_ids
+    selected_cart_items: list[str]   # cart_item_ids of purchasable items
     selected_address_id: Optional[str]
     payment_status: Optional[str]
     current_order_id: Optional[str]
     razorpay_order_id: Optional[str]
     payment_link: Optional[str]
+    has_external: bool               # True when cart has external (non-purchasable) items
+    external_items: list[dict]       # full details of external items for frontend display
 
 
 class AgentState(TypedDict):

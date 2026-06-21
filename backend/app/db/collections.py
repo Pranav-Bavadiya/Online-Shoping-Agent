@@ -32,5 +32,9 @@ def thread_carts() -> AsyncIOMotorCollection:
 def orders() -> AsyncIOMotorCollection:
     return get_database()["orders"]
 
+def seller_sub_orders() -> AsyncIOMotorCollection:
+    """Per-seller sub-orders grouped under a parent order."""
+    return get_database()["seller_sub_orders"]
+
 def payments() -> AsyncIOMotorCollection:
     return get_database()["payments"]

@@ -8,6 +8,18 @@ class PriceSchema(BaseModel):
     currency: str = "INR"
 
 
+class ExternalItemSchema(BaseModel):
+    """An external (non-purchasable) product shown with a redirect link."""
+    cart_item_id: str = ""
+    product_id: str = ""
+    title: str
+    price: PriceSchema = PriceSchema(value=0.0)
+    image: str = ""
+    redirect_url: str = ""
+    source: str = ""
+    can_buy_here: bool = False
+
+
 class MessageProductSchema(BaseModel):
     """Product returned inside chat messages — includes commerce metadata."""
     product_id: str
@@ -22,6 +34,9 @@ class MessageProductSchema(BaseModel):
     can_buy_here: bool = False
     redirect_url: str = ""
     cart_supported: bool = False
+    # Extra fields carried through pipeline
+    seller_id: str = ""
+    category: str = ""
 
 
 class RawProductSchema(BaseModel):

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = True
 
+    # Razorpay (test-mode)
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -62,8 +66,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
-
-# Razorpay (test-mode)
-razorpay_key_id: str = ""
-razorpay_key_secret: str = ""

@@ -63,8 +63,9 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
     seen_pids = [
         p.get("product_id")
         for msg in existing_messages
-        for p in (msg.get("products") if isinstance(msg, dict) else [])
-        if p.get("product_id")
+        if isinstance(msg, dict)
+        for p in (msg.get("products") or [])
+        if isinstance(p, dict) and p.get("product_id")
     ]
     feedback_summary = await get_feedback_summary(user_id, seen_pids) if seen_pids else {}
 
@@ -114,8 +115,10 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
             **initial_state,
             "messages": all_messages + [{
                 "role": "assistant",
-                "content": "Sorry, we weren't able to grant your request. Please try again.",
+                "content": "Sorry, we weren't able to handle your request. Please try again.",
                 "products": [],
+                "external_items": [],
+                "has_external": False,
             }],
             "final_products": [],
         }
@@ -125,8 +128,10 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
     await touch_thread(thread_id)
 
     # ── Extract last assistant response ───────────────────────────────────────
+    final_messages = final_state.get("messages", [])
+
     last_assistant = None
-    for msg in reversed(final_state.get("messages", [])):
+    for msg in reversed(final_messages):
         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
         if role == "assistant":
             last_assistant = msg
@@ -135,8 +140,25 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
     if last_assistant is None:
         last_assistant = {"role": "assistant", "content": "How can I help?", "products": []}
 
-    content = last_assistant.get("content", "") if isinstance(last_assistant, dict) else getattr(last_assistant, "content", "")
-    products = last_assistant.get("products", []) if isinstance(last_assistant, dict) else []
+    content = (
+        last_assistant.get("content", "") if isinstance(last_assistant, dict)
+        else getattr(last_assistant, "content", "")
+    )
+
+    # Read products and external_items ONLY from the last assistant message.
+    # The tool_loop now stores both fields on the assistant message so there
+    # is no need to scan backwards through tool messages.  This ensures the
+    # frontend only receives what the LLM explicitly decided to surface.
+    products = (
+        last_assistant.get("products", []) if isinstance(last_assistant, dict) else []
+    ) or []
+
+    external_items: list[dict] = (
+        last_assistant.get("external_items", []) if isinstance(last_assistant, dict) else []
+    ) or []
+    has_external: bool = (
+        last_assistant.get("has_external", False) if isinstance(last_assistant, dict) else False
+    ) or bool(external_items)
 
     clr = final_state.get("clarification") or {}
     clarification_question = clr.get("question") if clr.get("pending") else None
@@ -152,6 +174,8 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
         "thread_id": thread_id,
         "content": content or "",
         "products": products or [],
+        "external_items": external_items,
+        "has_external": has_external,
         "clarification_question": clarification_question,
         # ── Commerce state returned to frontend ───────────────────────────────
         "cart": updated_cart,

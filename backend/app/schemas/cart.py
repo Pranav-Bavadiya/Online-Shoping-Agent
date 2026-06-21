@@ -36,3 +36,4 @@ class CartResponse(BaseModel):
     purchasable_count: int
     external_count: int
     estimated_total: float
+    currency: str = "INR"

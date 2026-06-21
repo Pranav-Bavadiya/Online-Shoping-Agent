@@ -16,6 +16,7 @@ class CartItemModel(BaseModel):
     can_buy_here: bool = True
     redirect_url: str = ""
     quantity: int = 1
+    seller_id: Optional[str] = None   # populated for local products
     added_at: datetime = Field(default_factory=utcnow)
 
     def to_doc(self) -> dict:

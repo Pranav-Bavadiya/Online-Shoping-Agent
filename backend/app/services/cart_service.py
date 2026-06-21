@@ -9,6 +9,9 @@ from app.utils.uuid import new_request_id
 
 logger = get_logger(__name__)
 
+CART_MAX_UNIQUE_ITEMS = 100  # max distinct products in a single cart
+CART_MAX_ITEM_QUANTITY = 100  # max quantity per single item
+
 
 async def _get_or_create_cart(thread_id: str, user_id: str) -> dict:
     doc = await col.thread_carts().find_one({"thread_id": thread_id})
@@ -33,7 +36,13 @@ async def add_item(thread_id: str, user_id: str, product: dict, quantity: int = 
     # Check if already in cart
     for item in items:
         if item["product_id"] == product["product_id"]:
-            item["quantity"] = min(item["quantity"] + quantity, 99)
+            new_qty = item["quantity"] + quantity
+            if new_qty > CART_MAX_ITEM_QUANTITY:
+                raise ValueError(
+                    f"You can only add up to {CART_MAX_ITEM_QUANTITY} units of the same item. "
+                    f"You already have {item['quantity']} in your cart."
+                )
+            item["quantity"] = new_qty
             await col.thread_carts().update_one(
                 {"thread_id": thread_id},
                 {"$set": {"items": items, "updated_at": datetime.utcnow()}},
@@ -41,7 +50,18 @@ async def add_item(thread_id: str, user_id: str, product: dict, quantity: int = 
             logger.info("Cart: incremented item", extra={"product_id": product["product_id"]})
             return await get_cart(thread_id, user_id)
 
-    # Add new item
+    # Check unique items limit
+    if len(items) >= CART_MAX_UNIQUE_ITEMS:
+        raise ValueError(
+            f"Your cart is full! You can have at most {CART_MAX_UNIQUE_ITEMS} different products. "
+            "Please remove something before adding more."
+        )
+
+    # Validate quantity
+    if quantity > CART_MAX_ITEM_QUANTITY:
+        raise ValueError(
+            f"You can add at most {CART_MAX_ITEM_QUANTITY} units of a single item at a time."
+        )
     source = product.get("source", "local")
     can_buy_here = source == "local"
     new_item = CartItemModel(
@@ -55,6 +75,7 @@ async def add_item(thread_id: str, user_id: str, product: dict, quantity: int = 
         can_buy_here=product.get("can_buy_here", can_buy_here),
         redirect_url=product.get("url", ""),
         quantity=quantity,
+        seller_id=product.get("seller_id"),
     )
     items.append(new_item.to_doc())
     await col.thread_carts().update_one(
@@ -88,7 +109,11 @@ async def update_quantity(thread_id: str, cart_item_id: str, quantity: int) -> d
     else:
         for item in items:
             if item["cart_item_id"] == cart_item_id:
-                item["quantity"] = min(quantity, 99)
+                if quantity > CART_MAX_ITEM_QUANTITY:
+                    raise ValueError(
+                        f"Quantity cannot exceed {CART_MAX_ITEM_QUANTITY} per item."
+                    )
+                item["quantity"] = quantity
     await col.thread_carts().update_one(
         {"thread_id": thread_id},
         {"$set": {"items": items, "updated_at": datetime.utcnow()}},
@@ -126,11 +151,13 @@ def build_cart_summary(cart: dict) -> dict:
         float(i.get("price", {}).get("value", 0)) * i.get("quantity", 1)
         for i in purchasable
     )
+    currency = purchasable[0]["price"].get("currency", "INR") if purchasable else "INR"
     return {
         "items": items,
         "purchasable_count": len(purchasable),
         "external_count": len(external),
         "estimated_total": round(total, 2),
+        "currency": currency,
         "purchasable_items": purchasable,
         "external_items": external,
     }

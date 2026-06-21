@@ -22,9 +22,8 @@ ONBOARDING_MSG = """👋 Welcome! I'm your AI shopping assistant. Here's what I 
 
 🛒 **Cart**: Add/remove products via chat ("Add the first one to my cart")
 🏪 **Marketplaces**: Search Local, eBay, or both ("Show only local products")
-💳 **Checkout**: Buy products conversationally ("Checkout my cart")
-🎯 **Selective buy**: Purchase specific items ("Buy 1st and 3rd only")
-🔗 **External products**: eBay/Amazon items show redirect links
+💳 **Checkout**: Buy all cart items conversationally ("Checkout my cart")
+🔗 **External products**: eBay/other marketplace items show redirect links to purchase on their site
 
 Let's start shopping! What are you looking for?"""
 
@@ -46,7 +45,7 @@ async def formatter_node(state: AgentState) -> dict:
             msg_content = ONBOARDING_MSG + "\n\n" + msg_content
         return {
             "final_products": [],
-            "messages": [{"role": "assistant", "content": msg_content, "products": []}],
+            "messages": [{"role": "assistant", "content": msg_content, "products": [], "external_items": [], "has_external": False}],
         }
 
     reasons = await _generate_reasons(products, query_text)
@@ -55,6 +54,9 @@ async def formatter_node(state: AgentState) -> dict:
         price_info = p.get("price") or {}
         source = p.get("source", "")
         can_buy = p.get("can_buy_here", source == "local")
+        raw_attrs = p.get("raw_attributes") or {}
+        # Carry seller_id through so add_to_cart can include it in CartItemModel
+        seller_id = raw_attrs.get("seller_id") or p.get("seller_id") or ""
         formatted.append({
             "product_id": p.get("product_id", ""),
             "title": p.get("title", ""),
@@ -67,6 +69,9 @@ async def formatter_node(state: AgentState) -> dict:
             "can_buy_here": can_buy,
             "redirect_url": p.get("redirect_url") or p.get("url", ""),
             "cart_supported": True,
+            # Pass-through fields needed by cart/order — not shown in UI but used by backend
+            "seller_id": seller_id,
+            "category": p.get("category", ""),
         })
 
     msg_content = await _generate_intro(query_text, len(formatted))
@@ -76,7 +81,13 @@ async def formatter_node(state: AgentState) -> dict:
     logger.info("Node: formatter end", extra={"products_formatted": len(formatted)})
     return {
         "final_products": formatted,
-        "messages": [{"role": "assistant", "content": msg_content, "products": formatted}],
+        "messages": [{
+            "role": "assistant",
+            "content": msg_content,
+            "products": formatted,
+            "external_items": [],
+            "has_external": False,
+        }],
     }
 
 

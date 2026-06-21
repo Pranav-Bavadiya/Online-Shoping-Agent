@@ -41,7 +41,15 @@ async def get_thread(
         role = m.get("role") if isinstance(m, dict) else getattr(m, "type", "user")
         content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
         products = m.get("products", []) if isinstance(m, dict) else []
-        messages.append(MessageSchema(role=role, content=content, products=products))
+        external_items = m.get("external_items", []) if isinstance(m, dict) else []
+        has_external = m.get("has_external", False) if isinstance(m, dict) else False
+        messages.append(MessageSchema(
+            role=role,
+            content=content,
+            products=products,
+            external_items=external_items,
+            has_external=has_external,
+        ))
 
     return ThreadDetailResponse(thread_id=thread_id, messages=messages)
 

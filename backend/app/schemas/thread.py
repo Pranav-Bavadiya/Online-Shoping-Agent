@@ -2,13 +2,15 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
-from app.schemas.product import MessageProductSchema
+from app.schemas.product import ExternalItemSchema, MessageProductSchema
 
 
 class MessageSchema(BaseModel):
-    role: str  # user | assistant
+    role: str  # user | assistant | tool
     content: str
     products: list[MessageProductSchema] = []
+    external_items: list[ExternalItemSchema] = []
+    has_external: bool = False
 
 
 class ThreadSummaryResponse(BaseModel):

@@ -17,7 +17,15 @@ async def clarification_response_node(state: AgentState) -> dict:
         "request_id": state.get("request_id"),
     })
 
+    # Include external_items and has_external so search_service can read all
+    # fields it needs from the single last assistant message consistently.
     return {
-        "messages": [{"role": "assistant", "content": question, "products": []}],
+        "messages": [{
+            "role": "assistant",
+            "content": question,
+            "products": [],
+            "external_items": [],
+            "has_external": False,
+        }],
         "final_products": [],
     }

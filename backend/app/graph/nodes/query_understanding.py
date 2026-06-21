@@ -13,10 +13,12 @@ Extract structured information from the user's message.
 
 Return ONLY valid JSON with this exact schema:
 {
-  "category": "<product category or empty string>",
+  "category": "<primary product category or empty string>",
   "keywords": ["<keyword1>", "<keyword2>"],
   "price_filter": {"min": <number or 0>, "max": <number or 0>},
-  "normalized_query": "<complete standalone search query>"
+  "normalized_query": "<complete standalone search query>",
+  "required_types": ["<type1>", "<type2>"],
+  "brand_strict": "<brand name or empty string>"
 }
 
 Rules:
@@ -27,10 +29,27 @@ Rules:
 - Extract prices: "under 2000" → max:2000, "above 500" → min:500.
 - If no price mentioned, use 0 for both.
 - Keywords: meaningful terms only, no stop words.
+- required_types: CRITICAL — if user requests MULTIPLE DISTINCT product types (e.g. "5 red shirts AND
+  5 blue jeans"), list each distinct type here e.g. ["red shirts", "blue jeans"].
+  This prevents the filtering/ranking stage from removing one type.
+  For single-type queries, leave as empty list [].
+- brand_strict: ONLY set this when user EXPLICITLY says they want results from ONE specific brand
+  and NO other brands (e.g. "only Samsung", "Samsung phones only", "show me only Apple products",
+  "strictly Nike shoes"). Leave as empty string "" for all other cases, including when a brand is
+  mentioned as a preference but not an exclusive filter.
 
-Refinement rule: user says "show cheaper ones", "wireless ones", "Samsung only" →
+Refinement rule: user says "show cheaper ones", "wireless ones", "Samsung only" ->
 generate COMPLETE query merging original intent + new conditions.
-Example: original=headphones, new=wireless under 1500 → "wireless headphones under 1500"
+Example: original=headphones, new=wireless under 1500 -> "wireless headphones under 1500"
+
+Multi-type example: "give me 5 red shirts and 5 blue jeans" ->
+  category="clothing", keywords=["shirt","jeans","red","blue"],
+  required_types=["red shirts", "blue jeans"],
+  normalized_query="red shirts and blue jeans"
+
+Brand-strict example: "show me only Samsung phones" ->
+  brand_strict="samsung", keywords=["samsung","phones"],
+  required_types=[], normalized_query="Samsung phones"
 """
 
 
@@ -80,6 +99,8 @@ async def query_understanding_node(state: AgentState) -> dict:
 
     logger.info("Node: query_understanding end", extra={
         "category": structured.get("category"), "keywords": structured.get("keywords"),
+        "required_types": structured.get("required_types", []),
+        "brand_strict": structured.get("brand_strict", ""),
         "request_id": state.get("request_id"),
     })
     return {"structured_query": structured}
@@ -103,4 +124,6 @@ def _heuristic_parse(msg: str) -> dict:
         "keywords": keywords,
         "price_filter": {"min": price_min, "max": price_max},
         "normalized_query": msg.strip(),
+        "required_types": [],
+        "brand_strict": "",
     }
