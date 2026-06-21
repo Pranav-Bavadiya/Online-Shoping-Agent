@@ -8,10 +8,12 @@ from google.oauth2 import id_token
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token, hash_password, validate_password_strength, verify_password,
+)
 from app.db import collections as col
 from app.exceptions.auth import InvalidCredentialsError, InvalidTokenError
-from app.exceptions.base import ConflictError
+from app.exceptions.base import BadRequestError, ConflictError
 from app.utils.uuid import new_user_id
 
 logger = get_logger(__name__)
@@ -31,6 +33,7 @@ async def signup(name: str, email: str, password: str, phone: Optional[str] = No
         "email": email,
         "password_hash": hash_password(password),
         "google_id": None,
+        "auth_providers": ["password"],
         "phone": phone,
         "addresses": [],
         "default_address_id": None,
@@ -41,7 +44,7 @@ async def signup(name: str, email: str, password: str, phone: Optional[str] = No
     await col.users().insert_one(user_doc)
     token = create_access_token(subject=user_id)
     logger.info("User signed up", extra={"user_id": user_id})
-    return {"access_token": token, "profile_completed": user_doc["profile_completed"]}
+    return {"access_token": token, "profile_completed": user_doc["profile_completed"], "has_password": True}
 
 
 async def login(email: str, password: str) -> dict:
@@ -55,7 +58,11 @@ async def login(email: str, password: str) -> dict:
 
     token = create_access_token(subject=user["_id"])
     logger.info("User logged in", extra={"user_id": user["_id"]})
-    return {"access_token": token, "profile_completed": user.get("profile_completed", False)}
+    return {
+        "access_token": token,
+        "profile_completed": user.get("profile_completed", False),
+        "has_password": bool(user.get("password_hash")),
+    }
 
 
 async def google_login(id_token_str: str) -> dict:
@@ -82,11 +89,17 @@ async def google_login(id_token_str: str) -> dict:
         user = await col.users().find_one({"email": email})
         if user:
             # Link Google ID to existing account
+            update: dict = {"google_id": google_id, "updated_at": datetime.utcnow()}
+            providers = set(user.get("auth_providers") or [])
+            if "google" not in providers:
+                providers.add("google")
+                update["auth_providers"] = list(providers)
             await col.users().update_one(
                 {"_id": user["_id"]},
-                {"$set": {"google_id": google_id, "updated_at": datetime.utcnow()}}
+                {"$set": update}
             )
             user["google_id"] = google_id
+            user["auth_providers"] = list(providers)
 
     # 3. Create new user
     if not user:
@@ -98,6 +111,7 @@ async def google_login(id_token_str: str) -> dict:
             "email": email,
             "password_hash": None,
             "google_id": google_id,
+            "auth_providers": ["google"],
             "phone": None,
             "addresses": [],
             "default_address_id": None,
@@ -112,4 +126,41 @@ async def google_login(id_token_str: str) -> dict:
     return {
         "access_token": token,
         "profile_completed": user.get("profile_completed", False),
+        "has_password": bool(user.get("password_hash")),
     }
+
+
+async def create_password(user_id: str, password: str) -> dict:
+    """
+    Add a password to an account that currently has none (e.g. Google-only users).
+
+    - 400 if password_hash already exists.
+    - 400 if password fails strength validation.
+    - Sets password_hash and adds "password" to auth_providers.
+    """
+    user = await col.users().find_one({"_id": user_id})
+    if not user:
+        raise BadRequestError("User not found")
+
+    if user.get("password_hash"):
+        raise ConflictError("Password already set for this account. Use change-password instead.")
+
+    strength_error = validate_password_strength(password)
+    if strength_error:
+        raise BadRequestError(strength_error)
+
+    providers = set(user.get("auth_providers") or [])
+    providers.add("password")
+
+    await col.users().update_one(
+        {"_id": user_id},
+        {
+            "$set": {
+                "password_hash": hash_password(password),
+                "auth_providers": list(providers),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+    logger.info("Password created for user", extra={"user_id": user_id})
+    return {"message": "Password created successfully.", "has_password": True}

@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user
 from app.schemas.seller import (
     LocalProductCreateRequest, LocalProductResponse, LocalProductUpdateRequest,
-    SellerOrderResponse, SellerProfileResponse, SellerRegisterRequest,
+    SellerDashboardSummary, SellerOrderResponse, SellerProfileResponse,
+    SellerProfileUpdateRequest, SellerRegisterRequest,
 )
 from app.services import seller_service, order_service
 
@@ -34,10 +35,35 @@ async def get_seller_profile(user=Depends(get_current_user)):
     )
 
 
+@router.put("/profile", response_model=SellerProfileResponse)
+async def update_seller_profile(body: SellerProfileUpdateRequest, user=Depends(get_current_user)):
+    try:
+        doc = await seller_service.update_seller_profile(user["_id"], body.model_dump())
+        return SellerProfileResponse(
+            seller_id=doc["_id"], shop_name=doc["shop_name"],
+            description=doc["description"], is_active=doc["is_active"]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 def _require_seller(user):
     if user.get("role") != "seller" or not user.get("seller_id"):
         raise HTTPException(status_code=403, detail="Seller account required")
     return user["seller_id"]
+
+
+@router.get("/dashboard", response_model=SellerDashboardSummary)
+async def seller_dashboard(user=Depends(get_current_user)):
+    seller_id = _require_seller(user)
+    products = await seller_service.get_seller_products(seller_id)
+    active_orders = await order_service.get_seller_orders(seller_id, active_only=True)
+    return SellerDashboardSummary(
+        total_products=len(products),
+        active_products=sum(1 for p in products if p.get("is_active")),
+        active_orders=len(active_orders),
+        pending_dispatches=sum(1 for o in active_orders if o.get("status") == "PAID"),
+    )
 
 
 @router.get("/products", response_model=list[LocalProductResponse])

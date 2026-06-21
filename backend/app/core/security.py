@@ -1,6 +1,6 @@
 """JWT creation/verification and password hashing."""
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -23,6 +23,24 @@ def hash_password(plain: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
+
+def validate_password_strength(password: str) -> Optional[str]:
+    """
+    Validate password strength. Returns an error message string if invalid,
+    or None if the password is acceptable.
+    """
+    if len(password) < 8:
+        return "Password must be at least 8 characters long."
+    if len(password) > 128:
+        return "Password must be at most 128 characters long."
+    if not any(c.isupper() for c in password):
+        return "Password must contain at least one uppercase letter."
+    if not any(c.islower() for c in password):
+        return "Password must contain at least one lowercase letter."
+    if not any(c.isdigit() for c in password):
+        return "Password must contain at least one digit."
+    return None
 
 
 # ---------------------------------------------------------------------------

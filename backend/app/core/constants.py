@@ -60,11 +60,11 @@ TOOL_UPDATE_CART_QTY  = "update_cart_quantity"
 TOOL_CLEAR_CART       = "clear_cart"
 TOOL_CHANGE_MARKETS   = "change_marketplaces"
 TOOL_START_CHECKOUT   = "start_checkout"
-# TOOL_SELECT_ITEMS removed — checkout always uses all purchasable items automatically
+# Checkout always uses all purchasable items automatically
 TOOL_SELECT_ADDRESS   = "select_address"
 TOOL_ADD_ADDRESS      = "add_address"
-TOOL_CREATE_PAYMENT   = "create_payment"
-TOOL_CONFIRM_PAYMENT  = "confirm_payment"
+# create_payment and confirm_payment are REST-only — NOT agent tools.
+# The agent hands off to the frontend at step="payment_required".
 TOOL_BUY_NOW          = "buy_now"
 TOOL_GET_ORDERS       = "get_orders"
 
@@ -86,8 +86,11 @@ ROLE_CUSTOMER = "customer"
 ROLE_SELLER   = "seller"
 
 # Checkout steps
-CHECKOUT_STEP_INIT    = "init"
-CHECKOUT_STEP_ITEMS   = "items_selected"
-CHECKOUT_STEP_ADDRESS = "address_selected"
-CHECKOUT_STEP_PAYMENT = "payment_created"
-CHECKOUT_STEP_DONE    = "done"
+CHECKOUT_STEP_INIT             = "init"
+CHECKOUT_STEP_ITEMS            = "items_selected"
+CHECKOUT_STEP_ADDRESS          = "address_selected"
+# After address confirmation the agent stops — payment is fully frontend-driven.
+# Frontend detects checkout.step == "payment_required" and calls POST /checkout/payment.
+CHECKOUT_STEP_PAYMENT_REQUIRED = "payment_required"
+CHECKOUT_STEP_PAYMENT          = "payment_created"   # set by REST after /checkout/payment
+CHECKOUT_STEP_DONE             = "done"              # set by REST after /checkout/confirm

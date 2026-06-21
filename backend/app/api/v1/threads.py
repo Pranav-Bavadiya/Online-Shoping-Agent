@@ -1,8 +1,10 @@
 """Thread routes — list, get, rename, delete."""
-from fastapi import APIRouter, Depends
+from typing import Optional
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user_id
 from app.graph.checkpointer.memory import checkpointer
+from app.schemas.search import CheckoutStateSchema
 from app.schemas.thread import (
     MessageSchema, RenameTitleRequest,
     ThreadDetailResponse, ThreadSummaryResponse,
@@ -28,16 +30,30 @@ async def list_threads(user_id: str = Depends(get_current_user_id)):
 @router.get("/{thread_id}", response_model=ThreadDetailResponse)
 async def get_thread(
     thread_id: str,
+    limit: int = Query(30, ge=1, le=200, description="Most-recent N messages to return"),
+    before: Optional[str] = Query(None, description="Cursor from a previous response's next_cursor — load messages before this point"),
     user_id: str = Depends(get_current_user_id),
 ):
     # Verify ownership (raises 403/404 if invalid)
     await thread_service.verify_thread_ownership(thread_id, user_id)
 
-    # Load messages from checkpointer
+    # Load messages from checkpointer — already in chronological order
     raw_messages = await checkpointer.get_messages(thread_id)
 
+    # Paginate from the tail: `before` is the index to page backwards from
+    # (defaults to the very end, i.e. most recent messages first load).
+    total = len(raw_messages)
+    try:
+        end = total if before is None else max(0, min(total, int(before)))
+    except ValueError:
+        end = total
+    start = max(0, end - limit)
+    page = raw_messages[start:end]
+    has_more = start > 0
+    next_cursor = str(start) if has_more else None
+
     messages = []
-    for m in raw_messages:
+    for m in page:
         role = m.get("role") if isinstance(m, dict) else getattr(m, "type", "user")
         content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
         products = m.get("products", []) if isinstance(m, dict) else []
@@ -51,7 +67,41 @@ async def get_thread(
             has_external=has_external,
         ))
 
-    return ThreadDetailResponse(thread_id=thread_id, messages=messages)
+    return ThreadDetailResponse(
+        thread_id=thread_id, messages=messages,
+        has_more=has_more, next_cursor=next_cursor,
+    )
+
+
+@router.get("/{thread_id}/checkout", response_model=CheckoutStateSchema)
+async def get_thread_checkout(
+    thread_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Read the current checkout state for a thread without triggering a search/chat turn.
+
+    Useful for refresh resilience: if a user reloads the page mid-payment, the
+    frontend can call this to check whether checkout.step == "payment_required"
+    or "payment_created" and show an informational "resume payment" banner.
+
+    NOTE: frontend should NOT auto-reopen the Razorpay widget on page load just
+    because this returns a pending step — only use it to render a manual
+    resume affordance, to avoid surprising popups on mount.
+    """
+    await thread_service.verify_thread_ownership(thread_id, user_id)
+    saved_state = await checkpointer.load(thread_id) or {}
+    raw_checkout = saved_state.get("checkout") or {}
+    return CheckoutStateSchema(
+        active=raw_checkout.get("active", False),
+        step=raw_checkout.get("step"),
+        selected_cart_items=raw_checkout.get("selected_cart_items") or [],
+        selected_address_id=raw_checkout.get("selected_address_id"),
+        current_order_id=raw_checkout.get("current_order_id"),
+        razorpay_order_id=raw_checkout.get("razorpay_order_id"),
+        payment_status=raw_checkout.get("payment_status"),
+        has_external=raw_checkout.get("has_external", False),
+    )
 
 
 @router.put("/{thread_id}", status_code=204)

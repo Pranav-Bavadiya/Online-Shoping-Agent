@@ -160,13 +160,25 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
         last_assistant.get("has_external", False) if isinstance(last_assistant, dict) else False
     ) or bool(external_items)
 
-    clr = final_state.get("clarification") or {}
-    clarification_question = clr.get("question") if clr.get("pending") else None
+    # NOTE: clarification_question is intentionally NOT extracted separately here.
+    # clarification_response_node already writes the question text into the
+    # assistant message's `content` field — returning it again as a dedicated
+    # field would be duplicate data. The frontend should just render `content`
+    # like any other assistant message; no special-casing needed.
 
     # ── Build commerce metadata for frontend ──────────────────────────────────
-    updated_cart = final_state.get("thread_cart") or thread_cart
+    # `checkout` is kept because checkout.step=="payment_required" is a structural
+    # signal the frontend needs to trigger the Razorpay widget — it is NOT
+    # narrated as text anywhere, so there is no redundancy here.
+    #
+    # `cart` and `selected_marketplaces` are intentionally NOT returned:
+    #   - cart: already narrated in `content` whenever the user asks to see it
+    #     (show_cart tool), and a dedicated GET /threads/{thread_id}/cart
+    #     endpoint exists for the frontend to fetch live cart state anytime.
+    #   - selected_marketplaces: already narrated in `content` whenever changed
+    #     (change_marketplaces tool); there's no structural need for the
+    #     frontend to read it out-of-band on every single response.
     updated_checkout = final_state.get("checkout") or {}
-    updated_markets = final_state.get("selected_marketplaces") or selected_marketplaces
 
     logger.info("Search service done", extra={"thread_id": thread_id, "request_id": request_id})
 
@@ -176,9 +188,6 @@ async def handle_search(user_id: str, query: str, thread_id: Optional[str]) -> d
         "products": products or [],
         "external_items": external_items,
         "has_external": has_external,
-        "clarification_question": clarification_question,
         # ── Commerce state returned to frontend ───────────────────────────────
-        "cart": updated_cart,
         "checkout": updated_checkout,
-        "selected_marketplaces": updated_markets,
     }

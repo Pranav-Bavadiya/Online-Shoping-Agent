@@ -8,6 +8,11 @@ class SellerRegisterRequest(BaseModel):
     description: str = ""
 
 
+class SellerProfileUpdateRequest(BaseModel):
+    shop_name: Optional[str] = None
+    description: Optional[str] = None
+
+
 class SellerProfileResponse(BaseModel):
     seller_id: str
     shop_name: str
@@ -64,3 +69,10 @@ class SellerOrderResponse(BaseModel):
     currency: str
     delivery_address: dict
     created_at: str
+
+
+class SellerDashboardSummary(BaseModel):
+    total_products: int
+    active_products: int
+    active_orders: int
+    pending_dispatches: int

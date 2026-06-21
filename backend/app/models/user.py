@@ -21,6 +21,7 @@ class UserModel(BaseModel):
     email: EmailStr
     password_hash: Optional[str] = None
     google_id: Optional[str] = None
+    auth_providers: list[str] = []   # e.g. ["google"], ["password"], ["google", "password"]
     phone: Optional[str] = None
     addresses: list[Address] = []
     default_address_id: Optional[str] = None

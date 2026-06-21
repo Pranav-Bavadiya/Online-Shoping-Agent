@@ -1,16 +1,23 @@
-"""Checkout tools — conversational checkout flow inside the tool loop."""
+"""Checkout tools — conversational checkout flow inside the tool loop.
+
+Responsibilities (agent scope):
+  - start_checkout   — validate cart, select purchasable items
+  - list_addresses   — show saved addresses
+  - select_address   — confirm delivery address → step becomes "payment_required"
+  - add_address      — save a new address
+
+Payment (Razorpay) is NOT handled by the agent.
+After address selection the agent emits step="payment_required" and stops.
+The frontend detects this and calls POST /checkout/payment directly.
+"""
 from typing import Optional
 from app.core.constants import (
     CHECKOUT_STEP_ADDRESS, CHECKOUT_STEP_DONE, CHECKOUT_STEP_INIT,
-    CHECKOUT_STEP_ITEMS, CHECKOUT_STEP_PAYMENT
+    CHECKOUT_STEP_ITEMS, CHECKOUT_STEP_PAYMENT_REQUIRED,
 )
 from app.core.logging import get_logger
 from app.db import collections as col
-from app.services.cart_service import build_cart_summary, get_cart, remove_purchased_items
-from app.services.order_service import (
-    create_order, get_order, mark_order_paid, update_order_razorpay
-)
-from app.services.payment_service import create_razorpay_order, verify_payment
+from app.services.cart_service import build_cart_summary, get_cart
 
 logger = get_logger(__name__)
 
@@ -98,7 +105,7 @@ async def start_checkout_tool(
 async def select_address_tool(
     user_id: str, address_id: str
 ) -> dict:
-    """Select delivery address for checkout."""
+    """Select delivery address. After this the agent hands off to frontend for payment."""
     user = await col.users().find_one({"_id": user_id})
     if not user:
         return {"status": "error", "message": "User not found."}
@@ -112,9 +119,13 @@ async def select_address_tool(
         }
     return {
         "status": "success",
-        "step": CHECKOUT_STEP_ADDRESS,
+        # Use payment_required so the frontend knows to launch the payment widget
+        "step": CHECKOUT_STEP_PAYMENT_REQUIRED,
         "address": chosen,
-        "message": f"Delivery to: {chosen['line1']}, {chosen['city']}, {chosen['pincode']}. Shall I proceed to payment?",
+        "message": (
+            f"✅ Delivery address confirmed: {chosen['line1']}, {chosen['city']}, {chosen['pincode']}.\n\n"
+            "A payment widget will appear for you to complete the purchase securely. 💳"
+        ),
     }
 
 
@@ -137,9 +148,10 @@ async def add_address_tool(
     )
     return {
         "status": "success",
+        # Address added — still need selection confirmation before payment_required
         "step": CHECKOUT_STEP_ADDRESS,
         "address": address,
-        "message": f"Address added: {line1}, {city}. Shall I use this for delivery?",
+        "message": f"Address saved: {line1}, {city}. Shall I use this for delivery?",
     }
 
 
@@ -164,90 +176,5 @@ async def list_addresses_tool(user_id: str) -> dict:
         "message": (
             f"Here are your saved addresses:\n{addr_list}\n\n"
             "Which one would you like to use for delivery? Or would you like to add a new address?"
-        ),
-    }
-
-
-async def create_payment_tool(
-    thread_id: str,
-    user_id: str,
-    selected_item_ids: list[str],
-    address: dict,
-) -> dict:
-    """Create Razorpay order and return payment details."""
-    cart = await get_cart(thread_id, user_id)
-    all_items = cart.get("items", [])
-    selected = [i for i in all_items if i["cart_item_id"] in selected_item_ids and i.get("can_buy_here")]
-
-    if not selected:
-        return {"status": "error", "message": "No purchasable items found for selected IDs."}
-
-    subtotal = sum(float(i["price"]["value"]) * i.get("quantity", 1) for i in selected)
-    currency = selected[0]["price"].get("currency", "INR")
-
-    # Create internal order
-    order_doc = await create_order(user_id, thread_id, selected, address)
-    order_id = order_doc["_id"]
-
-    # Create Razorpay order
-    rz = await create_razorpay_order(order_id, user_id, subtotal, currency)
-    await update_order_razorpay(order_id, rz["razorpay_order_id"])
-
-    return {
-        "status": "success",
-        "step": CHECKOUT_STEP_PAYMENT,
-        "order_id": order_id,
-        "razorpay_order_id": rz["razorpay_order_id"],
-        "razorpay_key_id": rz["key_id"],
-        "amount": rz["amount"],
-        "currency": currency,
-        "message": (
-            f"Payment session created for {currency} {subtotal:.2f}. "
-            "Please complete the payment using the checkout widget. "
-            f"Order ID: {order_id}"
-        ),
-    }
-
-
-async def confirm_payment_tool(
-    thread_id: str,
-    user_id: str,
-    razorpay_payment_id: str,
-    razorpay_order_id: str,
-    razorpay_signature: str,
-    selected_item_ids: list[str],
-) -> dict:
-    """Verify payment, create order, clean up cart."""
-    valid = await verify_payment(razorpay_payment_id, razorpay_order_id, razorpay_signature)
-    if not valid:
-        return {
-            "status": "failed",
-            "message": (
-                "Hmm, the payment verification didn't go through. This can sometimes happen due to "
-                "a network hiccup. Would you like to:\n"
-                "1. Try the payment again\n"
-                "2. Use a different payment method\n"
-                "3. Start a fresh payment session\n\n"
-                "Just let me know and I'll sort it out for you!"
-            ),
-        }
-
-    # Find and update order
-    order = await col.orders().find_one({"razorpay_order_id": razorpay_order_id})
-    if not order:
-        return {"status": "error", "message": "Order not found for this payment."}
-
-    await mark_order_paid(order["_id"], razorpay_payment_id)
-
-    # Remove purchased items from cart
-    await remove_purchased_items(thread_id, selected_item_ids)
-
-    return {
-        "status": "success",
-        "step": CHECKOUT_STEP_DONE,
-        "order_id": order["_id"],
-        "message": (
-            f"🎉 Payment confirmed! Your order {order['_id']} has been placed. "
-            "The seller will dispatch it shortly. Your cart has been updated."
         ),
     }

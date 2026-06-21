@@ -7,6 +7,7 @@ from app.core.logging import get_logger
 from app.exceptions.base import NotFoundError
 from app.schemas.auth import (
     AddressRequest, AddressResponse,
+    CreatePasswordRequest, CreatePasswordResponse,
     GoogleLoginRequest, LoginRequest, SignupRequest,
     TokenResponse, UpdateProfileRequest, UserResponse,
 )
@@ -27,6 +28,7 @@ async def signup(body: SignupRequest):
     return TokenResponse(
         access_token=result["access_token"],
         profile_completed=result["profile_completed"],
+        has_password=result.get("has_password", True),
     )
 
 
@@ -36,6 +38,7 @@ async def login(body: LoginRequest):
     return TokenResponse(
         access_token=result["access_token"],
         profile_completed=result["profile_completed"],
+        has_password=result.get("has_password", False),
     )
 
 
@@ -45,6 +48,26 @@ async def google_login(body: GoogleLoginRequest):
     return TokenResponse(
         access_token=result["access_token"],
         profile_completed=result["profile_completed"],
+        has_password=result.get("has_password", False),
+    )
+
+
+@router.post("/create-password", response_model=CreatePasswordResponse)
+async def create_password(
+    body: CreatePasswordRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Add a password to the authenticated user's account.
+
+    Intended for Google-authenticated users who want to also be able to
+    log in with email + password. Returns 400 if a password is already set,
+    or if the new password fails strength validation.
+    """
+    result = await auth_service.create_password(user_id=user_id, password=body.password)
+    return CreatePasswordResponse(
+        message=result["message"],
+        has_password=result["has_password"],
     )
 
 
@@ -64,6 +87,9 @@ async def get_me(user_id: str = Depends(get_current_user_id)):
         profile_completed=user.get("profile_completed", False),
         addresses=addresses,
         default_address_id=user.get("default_address_id"),
+        has_password=bool(user.get("password_hash")),
+        role=user.get("role", "customer"),
+        seller_id=user.get("seller_id"),
     )
 
 
@@ -86,6 +112,9 @@ async def update_profile(
         profile_completed=user.get("profile_completed", False),
         addresses=addresses,
         default_address_id=user.get("default_address_id"),
+        has_password=bool(user.get("password_hash")),
+        role=user.get("role", "customer"),
+        seller_id=user.get("seller_id"),
     )
 
 

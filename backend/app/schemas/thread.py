@@ -22,6 +22,8 @@ class ThreadSummaryResponse(BaseModel):
 class ThreadDetailResponse(BaseModel):
     thread_id: str
     messages: list[MessageSchema] = []
+    has_more: bool = False
+    next_cursor: Optional[str] = None
 
 
 class RenameTitleRequest(BaseModel):

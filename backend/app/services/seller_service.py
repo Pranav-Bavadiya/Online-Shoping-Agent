@@ -40,6 +40,18 @@ async def get_seller_by_id(seller_id: str) -> Optional[dict]:
     return await col.sellers().find_one({"_id": seller_id})
 
 
+async def update_seller_profile(user_id: str, updates: dict) -> dict:
+    """Update shop_name/description for the seller linked to user_id."""
+    seller = await get_seller_by_user(user_id)
+    if not seller:
+        raise ValueError("Seller profile not found")
+    clean = {k: v for k, v in updates.items() if v is not None}
+    if clean:
+        clean["updated_at"] = datetime.utcnow()
+        await col.sellers().update_one({"_id": seller["_id"]}, {"$set": clean})
+    return await get_seller_by_id(seller["_id"])
+
+
 # ── Product management ────────────────────────────────────────────────────────
 
 async def create_product(seller_id: str, data: dict) -> dict:

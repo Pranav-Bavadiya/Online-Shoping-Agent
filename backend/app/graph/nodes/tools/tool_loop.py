@@ -1,7 +1,12 @@
 """Tool Loop Node — LLM-driven agent loop (max N iterations).
 
-Handles BOTH conversational shopping AND all commerce operations:
-  cart management, checkout, marketplace switching, product details.
+Handles BOTH conversational shopping AND commerce operations:
+  cart management, checkout (up to address selection), marketplace switching,
+  product details.
+
+Payment (Razorpay) is fully frontend-driven — the agent does NOT create
+Razorpay orders or confirm payments.  After address selection the agent
+emits checkout.step="payment_required" and returns control to the frontend.
 """
 import json
 from typing import Any, Optional
@@ -14,8 +19,8 @@ from app.core.constants import (
     TOOL_ADD_TO_CART, TOOL_REMOVE_FROM_CART, TOOL_SHOW_CART,
     TOOL_UPDATE_CART_QTY, TOOL_CLEAR_CART, TOOL_CHANGE_MARKETS,
     TOOL_START_CHECKOUT, TOOL_SELECT_ADDRESS,
-    TOOL_ADD_ADDRESS, TOOL_CREATE_PAYMENT, TOOL_CONFIRM_PAYMENT,
-    TOOL_BUY_NOW, TOOL_GET_ORDERS,
+    TOOL_ADD_ADDRESS, TOOL_BUY_NOW, TOOL_GET_ORDERS,
+    CHECKOUT_STEP_PAYMENT_REQUIRED,
 )
 from app.core.llm_factory import get_llm, is_llm_configured
 from app.core.logging import get_logger
@@ -24,8 +29,8 @@ from app.graph.nodes.tools.cart_tools import (
     show_cart_tool, update_cart_quantity_tool,
 )
 from app.graph.nodes.tools.checkout_tools import (
-    add_address_tool, confirm_payment_tool, create_payment_tool,
-    list_addresses_tool, select_address_tool, start_checkout_tool,
+    add_address_tool, list_addresses_tool,
+    select_address_tool, start_checkout_tool,
 )
 from app.graph.nodes.tools.marketplace_tool import change_marketplaces_tool
 from app.graph.nodes.tools.product_tool import product_detail_tool
@@ -36,7 +41,7 @@ from app.services.order_service import get_user_orders
 logger = get_logger(__name__)
 
 TOOL_SYSTEM = """You are a friendly, conversational AI shopping assistant with full access to commerce tools. \
-Your job is to help users find products, manage their cart, and complete purchases. \
+Your job is to help users find products, manage their cart, and guide them through checkout up to payment. \
 Be warm, engaging, and guide users through each step like a knowledgeable sales assistant.
 
 ═══════════════════════════════════════════════════════
@@ -78,27 +83,25 @@ MARKETPLACE:
     Input: {"tool": "change_marketplaces", "marketplaces": ["local", "ebay"]}
     Available: local, ebay, mock
 
-CHECKOUT:
+CHECKOUT (Agent scope ends at address — payment is handled by the frontend widget):
   start_checkout — Begin the checkout process. Always follow the CHECKOUT FLOW below.
     Input: {"tool": "start_checkout", "cart_item_ids": null}
     ⚠ cart_item_ids is always null — checkout automatically uses all purchasable (local) items.
     ⚠ External items are listed separately and cannot be purchased here.
 
-  select_address — Select a saved delivery address.
+  select_address — Select a saved delivery address and trigger payment widget.
     Input: {"tool": "select_address", "address_id": "<id>"}
+    ⚠ After this tool succeeds, ALWAYS give a final_answer — do NOT call any more tools.
+       The frontend will automatically show the Razorpay payment widget.
 
   add_address — Save a new delivery address.
     Input: {"tool": "add_address", "line1": "...", "city": "...", "state": "...", "pincode": "...", "line2": "", "country": "India"}
+    ⚠ After adding, ask user to confirm: "Shall I use this address for delivery?"
+    ⚠ Then call select_address with the new address id to confirm it.
 
   list_addresses — List all saved delivery addresses for the user.
     Input: {"tool": "list_addresses"}
     ⚠ After showing addresses, always ask: "Would you like to use one of these, or add a new address?"
-
-  create_payment — Create Razorpay payment session.
-    Input: {"tool": "create_payment", "selected_item_ids": [...], "address_id": "<id>"}
-
-  confirm_payment — Verify payment signature and finalize order.
-    Input: {"tool": "confirm_payment", "razorpay_payment_id": "...", "razorpay_order_id": "...", "razorpay_signature": "..."}
 
 ORDERS:
   get_orders — Fetch the user's order history (recent purchases, order status, tracking).
@@ -128,18 +131,23 @@ STEP 3 — SELECT DELIVERY ADDRESS:
   - Call list_addresses to show saved addresses.
   - Always ask: "Would you like to use one of these addresses, or add a new one?"
   - Let user choose or add a new address.
-  - Confirm: "Great! I'll deliver to: <address>. Let's move on to payment 🛒"
+  - Call select_address with the chosen address_id.
 
-STEP 4 — PAYMENT:
-  - Call create_payment with selected items and address.
-  - Inform user: "Almost there! I've prepared your payment session for ₹<amount>."
+STEP 4 — HAND OFF TO PAYMENT WIDGET (CRITICAL):
+  - After select_address succeeds, give a final_answer IMMEDIATELY.
+  - Tell the user: "A secure payment widget will appear shortly to complete your purchase 💳"
+  - Do NOT call any more tools. Do NOT mention Razorpay details.
+  - The frontend handles payment automatically when it sees checkout.step="payment_required".
 
-STEP 5 — CONFIRMATION:
-  - After payment, call confirm_payment.
-  - If success: celebrate with a friendly message including order ID.
-  - If failure: say "Hmm, the payment didn't go through. Would you like to try again, \
-use a different payment method, or I can restart the payment for you?"
-
+STEP 5 — AFTER PAYMENT:
+  - Payment outcome messages (success, failure, cancellation) are automatically
+    injected into the conversation by the backend/frontend synchronization layer.
+  - Do NOT generate payment confirmation, payment failure, or payment cancellation
+    messages yourself.
+  - Do NOT celebrate, apologize, or restate payment status unless the user
+    explicitly asks a follow-up question about the payment or order.
+  - The payment system is responsible for notifying the user and persisting
+    those messages in chat history.
 ═══════════════════════════════════════════════════════
 DECISION RULES
 ═══════════════════════════════════════════════════════
@@ -159,7 +167,7 @@ DECISION RULES
 
 4. "BUY [product] FOR ME, DON'T SHOW ANYTHING":
    - Treat as silent-buy intent. Skip browsing, go directly to:
-     add_to_cart → start_checkout → list_addresses → create_payment.
+     add_to_cart → start_checkout → list_addresses → select_address.
    - Keep messages brief and progress-oriented.
 
 5. EXTERNAL PRODUCTS IN CART:
@@ -176,13 +184,19 @@ you'll need to purchase it directly on the seller's site."
 7. ALWAYS CONFIRM CRITICAL ACTIONS:
    - Before buying, adding to cart, or removing items when the product isn't clearly identified.
    - Exception: user explicitly says "don't ask, just buy" or similar.
-
+8. PAYMENT IS HANDLED BY FRONTEND — NEVER by you:
+   - Do NOT ask for card details, UPI IDs, or payment information.
+   - Do NOT mention Razorpay order IDs or payment links.
+   - After address confirmation, simply tell the user the payment widget will appear.
+   - Payment success, failure, and cancellation messages are automatically injected
+     into the chat and persisted by the payment system.
+   - Do NOT generate those payment outcome messages yourself.
 ═══════════════════════════════════════════════════════
 ENGAGEMENT GUIDELINES
 ═══════════════════════════════════════════════════════
 - Use short, friendly transition messages between steps:
   "Great choice! Now let me find your saved addresses... 📦"
-  "Perfect, address confirmed! Moving to payment now 💳"
+  "Perfect, address confirmed! The payment widget will appear now 💳"
   "All done! Your order is on its way 🎉"
 - After listing addresses, always ask if user wants to add a new one.
 - After checkout starts, keep user informed of each step.
@@ -297,22 +311,18 @@ Decide next action:"""
         selected_products = [current_products[i] for i in product_indices if 0 <= i < len(current_products)]
 
         # If LLM gave no product_indices but last tool was a search — use all current products
-        # so frontend always gets results after a search call.
         last_tool = tool_ctx.get("last_tool_used", "")
         if not selected_products and last_tool in (TOOL_SEARCH, TOOL_PRODUCT_DETAIL):
             selected_products = current_products
 
         # Resolve external items the LLM explicitly selected via external_item_indices.
-        # Only include them when the LLM actually chose to reference them — this prevents
-        # external items from bleeding into every response automatically.
         external_item_indices = decision.get("external_item_indices") or []
         selected_external = [
             current_external_items[i]
             for i in external_item_indices
             if 0 <= i < len(current_external_items)
         ]
-        # If LLM gave no external_item_indices but last tool was start_checkout,
-        # carry forward the external items from that tool result automatically.
+        # Auto-carry external items after start_checkout
         has_external = bool(selected_external)
         if not selected_external and last_tool == TOOL_START_CHECKOUT and current_external_items:
             selected_external = current_external_items
@@ -341,8 +351,6 @@ Decide next action:"""
     tool_result_msg = _format_tool_result(tool_name, tool_result)
     tool_products = _extract_products_from_result(tool_name, tool_result)
 
-    # For checkout tools, also surface external_items as products so the
-    # frontend can render them (with redirect_url) alongside local items.
     tool_external_items = _extract_external_items_from_result(tool_name, tool_result)
     has_external = tool_result.get("has_external", False)
 
@@ -392,7 +400,6 @@ async def _dispatch_tool(
         sq = dict(state.get("structured_query") or {})
         if update_params:
             sq.update(update_params)
-        # Filter by selected marketplaces
         markets = state.get("selected_marketplaces") or ["local", "ebay"]
         sq["selected_marketplaces"] = markets
         result = await search_tool(query, sq)
@@ -423,7 +430,6 @@ async def _dispatch_tool(
         cart_summary = result.get("cart_summary") or {}
         if cart_summary:
             extra["thread_cart"] = {"items": cart_summary.get("items", [])}
-            # Surface external info so frontend always has the latest external items
             if cart_summary.get("external_items"):
                 extra["_cart_external_items"] = cart_summary["external_items"]
         return result, extra
@@ -451,8 +457,6 @@ async def _dispatch_tool(
         return result, extra
 
     if tool_name == TOOL_START_CHECKOUT:
-        # Always pass None — checkout uses all purchasable items automatically.
-        # (Buying only a subset is not supported; external items are handled separately.)
         result = await start_checkout_tool(thread_id, user_id, None)
         if result.get("status") in ("success", "external_only"):
             current_checkout = dict(state.get("checkout") or {})
@@ -460,7 +464,6 @@ async def _dispatch_tool(
                 "active": True,
                 "step": result.get("step"),
                 "selected_cart_items": result.get("selected_item_ids", []),
-                # Store external info in checkout state so downstream steps can reference it
                 "external_items": result.get("external_items", []),
                 "has_external": result.get("has_external", False),
             })
@@ -472,12 +475,15 @@ async def _dispatch_tool(
         return result, extra
 
     if tool_name == TOOL_SELECT_ADDRESS:
-        result = await select_address_tool(user_id, tool_input.get("address_id", ""))
+        address_id = tool_input.get("address_id", "")
+        result = await select_address_tool(user_id, address_id)
         if result.get("status") == "success":
             current_checkout = dict(state.get("checkout") or {})
             current_checkout.update({
-                "step": result.get("step"),
-                "selected_address_id": tool_input.get("address_id"),
+                # step is now CHECKOUT_STEP_PAYMENT_REQUIRED ("payment_required")
+                "step": result.get("step", CHECKOUT_STEP_PAYMENT_REQUIRED),
+                "selected_address_id": address_id,
+                # Store full address object so REST /checkout/payment can use it
                 "_selected_address": result.get("address"),
             })
             extra["checkout"] = current_checkout
@@ -497,55 +503,7 @@ async def _dispatch_tool(
             extra["checkout"] = current_checkout
         return result, extra
 
-    if tool_name == TOOL_CREATE_PAYMENT:
-        current_checkout = dict(state.get("checkout") or {})
-        selected_ids = current_checkout.get("selected_cart_items", [])
-        address = current_checkout.get("_selected_address") or {}
-
-        if not selected_ids:
-            return {"status": "error", "message": "No checkout items selected. Please start checkout first."}, extra
-        if not address:
-            address_id = current_checkout.get("selected_address_id", "")
-            if address_id:
-                addr_res = await select_address_tool(user_id, address_id)
-                address = addr_res.get("address", {})
-        if not address:
-            return {"status": "error", "message": "No delivery address selected. Please select an address first."}, extra
-
-        result = await create_payment_tool(thread_id, user_id, selected_ids, address)
-        if result.get("status") == "success":
-            current_checkout.update({
-                "step": result.get("step"),
-                "current_order_id": result.get("order_id"),
-                "razorpay_order_id": result.get("razorpay_order_id"),
-                "payment_link": result.get("razorpay_order_id"),
-            })
-            extra["checkout"] = current_checkout
-        return result, extra
-
-    if tool_name == TOOL_CONFIRM_PAYMENT:
-        current_checkout = dict(state.get("checkout") or {})
-        selected_ids = current_checkout.get("selected_cart_items", [])
-        result = await confirm_payment_tool(
-            thread_id, user_id,
-            tool_input.get("razorpay_payment_id", ""),
-            tool_input.get("razorpay_order_id", ""),
-            tool_input.get("razorpay_signature", ""),
-            selected_ids,
-        )
-        if result.get("status") == "success":
-            extra["checkout"] = {
-                "active": False, "step": "done",
-                "selected_cart_items": [], "selected_address_id": None,
-                "payment_status": "captured", "current_order_id": result.get("order_id"),
-            }
-            from app.services.cart_service import get_cart
-            cart = await get_cart(thread_id, user_id)
-            extra["thread_cart"] = {"items": cart.get("items", [])}
-        return result, extra
-
     if tool_name == TOOL_BUY_NOW:
-        # Quick add-to-cart + start-checkout shortcut
         pid = tool_input.get("product_id", "")
         product = _resolve_product(pid, current_products)
         if not product:
@@ -673,7 +631,6 @@ def _format_tool_result(tool_name: str, result: dict) -> str:
         return message or f"Marketplaces updated: {result.get('selected_marketplaces', [])}"
 
     if tool_name == TOOL_START_CHECKOUT:
-        # Give LLM full context: purchasable items + external notice
         parts = [message or f"Checkout: {status}"]
         selected = result.get("selected_items", [])
         if selected:
@@ -683,8 +640,7 @@ def _format_tool_result(tool_name: str, result: dict) -> str:
             parts.append(external_notice)
         return "\n".join(parts)
 
-    if tool_name in (TOOL_SELECT_ADDRESS, TOOL_ADD_ADDRESS,
-                     TOOL_CREATE_PAYMENT, TOOL_CONFIRM_PAYMENT):
+    if tool_name in (TOOL_SELECT_ADDRESS, TOOL_ADD_ADDRESS):
         return message or f"Checkout: {status}"
 
     return message or f"Tool {tool_name}: {status}"
@@ -698,7 +654,6 @@ def _extract_products_from_result(tool_name: str, result: dict) -> list[dict]:
     if tool_name == TOOL_SEARCH and result.get("status") == "success":
         return result.get("results", [])
     if tool_name == TOOL_START_CHECKOUT and result.get("status") in ("success",):
-        # Return the purchasable selected items so the frontend can display them
         return result.get("selected_items", [])
     return []
 
@@ -711,9 +666,6 @@ def _extract_external_items_from_result(tool_name: str, result: dict) -> list[di
     """
     if tool_name == TOOL_START_CHECKOUT:
         raw_external = result.get("external_items", [])
-        # external_items from start_checkout_tool is a list of dicts with
-        # {title, redirect_url, cart_item_id}.  We need to enrich these with
-        # as much detail as we have from the cart summary's external_items.
         enriched = []
         for item in raw_external:
             enriched.append({
@@ -755,9 +707,9 @@ def _final_answer_state(
 ) -> dict:
     """Build the state update for a final assistant answer.
 
-    The assistant message now carries products AND external_items so that
+    The assistant message carries products AND external_items so that
     search_service can read everything it needs from the single last assistant
-    message without having to scan backwards through tool messages.
+    message without scanning backwards through tool messages.
     """
     result: dict = {
         "tool_context": {**tool_ctx, "iteration": MAX_TOOL_ITERATIONS, "action": "final_answer"},

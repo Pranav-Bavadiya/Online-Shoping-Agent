@@ -1,11 +1,9 @@
 """Search API endpoint — single entry point for the AI agent pipeline."""
 from fastapi import APIRouter, Depends, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.api.deps import get_current_user
 from app.core.rate_limiter import limiter
-from app.schemas.search import SearchRequest, SearchResponse
+from app.schemas.search import CheckoutStateSchema, SearchRequest, SearchResponse
 from app.services.search_service import handle_search
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -19,14 +17,29 @@ async def search(request: Request, body: SearchRequest, user=Depends(get_current
         query=body.query,
         thread_id=body.thread_id,
     )
+
+    # Coerce raw checkout dict into the typed schema so missing fields get defaults.
+    # checkout is the only commerce field returned — see schemas/search.py for why
+    # cart, selected_marketplaces, and clarification_question were removed.
+    raw_checkout = result.get("checkout") or {}
+    checkout_schema: CheckoutStateSchema | None = None
+    if raw_checkout:
+        checkout_schema = CheckoutStateSchema(
+            active=raw_checkout.get("active", False),
+            step=raw_checkout.get("step"),
+            selected_cart_items=raw_checkout.get("selected_cart_items") or [],
+            selected_address_id=raw_checkout.get("selected_address_id"),
+            current_order_id=raw_checkout.get("current_order_id"),
+            razorpay_order_id=raw_checkout.get("razorpay_order_id"),
+            payment_status=raw_checkout.get("payment_status"),
+            has_external=raw_checkout.get("has_external", False),
+        )
+
     return SearchResponse(
         thread_id=result["thread_id"],
         content=result["content"],
         products=result.get("products", []),
         external_items=result.get("external_items", []),
         has_external=result.get("has_external", False),
-        clarification_question=result.get("clarification_question"),
-        cart=result.get("cart"),
-        checkout=result.get("checkout"),
-        selected_marketplaces=result.get("selected_marketplaces"),
+        checkout=checkout_schema,
     )

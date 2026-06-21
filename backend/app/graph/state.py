@@ -68,13 +68,19 @@ class ThreadCart(TypedDict, total=False):
 
 class CheckoutState(TypedDict, total=False):
     active: bool
+    # Possible step values (see constants.py):
+    #   "items_selected"   — agent selected items
+    #   "address_selected" — intermediate, address being added
+    #   "payment_required" — agent done, frontend must call POST /checkout/payment
+    #   "payment_created"  — REST endpoint created Razorpay order
+    #   "done"             — REST endpoint confirmed payment
     step: Optional[str]
     selected_cart_items: list[str]   # cart_item_ids of purchasable items
     selected_address_id: Optional[str]
+    _selected_address: Optional[dict]  # full address object used by REST /checkout/payment
     payment_status: Optional[str]
     current_order_id: Optional[str]
     razorpay_order_id: Optional[str]
-    payment_link: Optional[str]
     has_external: bool               # True when cart has external (non-purchasable) items
     external_items: list[dict]       # full details of external items for frontend display
 
