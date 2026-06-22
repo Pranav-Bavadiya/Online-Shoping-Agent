@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # Razorpay (test-mode)
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
 
 
 @lru_cache()

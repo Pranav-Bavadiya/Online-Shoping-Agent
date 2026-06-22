@@ -3,13 +3,21 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user_id
+from app.core.constants import (
+    CHECKOUT_STEP_PAYMENT, CHECKOUT_STEP_PAYMENT_REQUIRED, ORDER_PAID,
+)
+from app.core.logging import get_logger
+from app.db import collections as col
 from app.graph.checkpointer.memory import checkpointer
 from app.schemas.search import CheckoutStateSchema
 from app.schemas.thread import (
     MessageSchema, RenameTitleRequest,
     ThreadDetailResponse, ThreadSummaryResponse,
 )
-from app.services import thread_service
+from app.services import payment_service, thread_service
+from app.services.checkout_finalize_service import finalize_payment_for_order
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 
@@ -83,15 +91,44 @@ async def get_thread_checkout(
 
     Useful for refresh resilience: if a user reloads the page mid-payment, the
     frontend can call this to check whether checkout.step == "payment_required"
-    or "payment_created" and show an informational "resume payment" banner.
+    or "payment_created" and show an informational "resume payment" banner —
+    or "done" if the payment was already captured (e.g. via webhook) even
+    though the frontend's own /checkout/confirm call never completed.
+
+    RECONCILIATION: if the persisted checkout state looks unfinished
+    (step is "payment_created" or "payment_required") but the associated
+    order is already PAID in the database, this reconciles by running the
+    same finalize_payment_for_order() the webhook uses, then returns the
+    now-correct "done" state. This covers exactly the scenario where a
+    webhook captured the payment but the browser crashed/refreshed before
+    /checkout/confirm or /checkout/notify ever ran.
 
     NOTE: frontend should NOT auto-reopen the Razorpay widget on page load just
     because this returns a pending step — only use it to render a manual
-    resume affordance, to avoid surprising popups on mount.
+    resume affordance (or a "Payment Completed" banner if step is "done"),
+    to avoid surprising popups on mount.
     """
     await thread_service.verify_thread_ownership(thread_id, user_id)
     saved_state = await checkpointer.load(thread_id) or {}
-    raw_checkout = saved_state.get("checkout") or {}
+    raw_checkout = dict(saved_state.get("checkout") or {})
+
+    order_id = raw_checkout.get("current_order_id")
+    unfinished_steps = {CHECKOUT_STEP_PAYMENT_REQUIRED, CHECKOUT_STEP_PAYMENT}
+    if order_id and raw_checkout.get("step") in unfinished_steps:
+        order = await col.orders().find_one({"_id": order_id})
+        if order and order.get("status") == ORDER_PAID:
+            logger.info("Reconciling stale checkout state against PAID order", extra={
+                "thread_id": thread_id, "order_id": order_id,
+            })
+            payment = await payment_service.get_payment_by_order(order_id)
+            razorpay_payment_id = (payment or {}).get("razorpay_payment_id", "")
+            await finalize_payment_for_order(
+                order_id=order_id, razorpay_payment_id=razorpay_payment_id, source="reconcile",
+            )
+            # Re-load the now-reconciled state
+            saved_state = await checkpointer.load(thread_id) or {}
+            raw_checkout = dict(saved_state.get("checkout") or {})
+
     return CheckoutStateSchema(
         active=raw_checkout.get("active", False),
         step=raw_checkout.get("step"),

@@ -108,5 +108,38 @@ async def _mark_payment_captured(
     )
 
 
+async def mark_payment_captured(
+    razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str = ""
+) -> None:
+    """Public wrapper — used by the webhook handler. Idempotent (plain $set)."""
+    await _mark_payment_captured(razorpay_order_id, razorpay_payment_id, razorpay_signature)
+
+
 async def get_payment_by_order(order_id: str) -> Optional[dict]:
     return await col.payments().find_one({"order_id": order_id})
+
+
+async def get_payment_by_razorpay_order_id(razorpay_order_id: str) -> Optional[dict]:
+    return await col.payments().find_one({"razorpay_order_id": razorpay_order_id})
+
+
+def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
+    """
+    Verify a Razorpay webhook's X-Razorpay-Signature header.
+
+    Webhook signatures are computed over the raw request body using the
+    *webhook secret* (configured separately in the Razorpay dashboard from
+    the API key secret used for payment signature verification).
+    """
+    if not settings.razorpay_webhook_secret:
+        # Dev mode — no webhook secret configured, accept all (logged loudly
+        # so this is never silently true in a real deployment).
+        logger.warning("Razorpay webhook secret not set — auto-approving webhook (DEV MODE)")
+        return True
+
+    expected = hmac.new(
+        settings.razorpay_webhook_secret.encode(),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature or "")

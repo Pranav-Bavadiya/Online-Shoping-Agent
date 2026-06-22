@@ -63,3 +63,10 @@ class NotifyOrderResponse(BaseModel):
     ok: bool
     thread_id: str
     event: str
+
+
+class WebhookAckResponse(BaseModel):
+    """Returned by POST /checkout/webhook — acknowledges receipt to Razorpay."""
+    ok: bool
+    handled: bool   # False for events we received but didn't act on (e.g. non payment.captured)
+    event: str
